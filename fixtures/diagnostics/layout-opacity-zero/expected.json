@@ -1,0 +1,14 @@
+{
+  "command": "Diagnostics.analyzeNode",
+  "params": {
+    "selector": "objectName=\"fixture.target\"",
+    "checks": ["opacity"]
+  },
+  "expectedIssues": [
+    {
+      "id": "layout.opacity_zero",
+      "nodeObjectName": "fixture.target",
+      "sourceMethod": "qqmldata-direct"
+    }
+  ]
+}

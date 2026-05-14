@@ -1,0 +1,7 @@
+interface:
+  display_name: "QmlAgent Runtime"
+  short_description: "Runtime evidence loop for Qt Quick"
+  default_prompt: "Use $qmlagent-runtime to build or repair this Qt Quick app and verify it with QmlAgent runtime evidence."
+
+policy:
+  allow_implicit_invocation: true

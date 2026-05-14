@@ -1,0 +1,17 @@
+{
+  "command": "Diagnostics.analyzeTree",
+  "params": {},
+  "expectedIssues": [
+    {
+      "id": "layout.outside_viewport",
+      "nodeObjectName": "fixture.target",
+      "sourceMethod": "qqmldata-direct"
+    },
+    {
+      "id": "layout.excessive_spacer",
+      "nodeObjectName": "fixture.spacer",
+      "sourceMethod": "qqmldata-direct",
+      "requiresRepairHints": true
+    }
+  ]
+}

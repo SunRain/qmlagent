@@ -1,0 +1,21 @@
+{
+  "command": "Diagnostics.analyzeBinding",
+  "params": {
+    "selector": "id=\"visualTarget\"",
+    "property": "computedValue"
+  },
+  "expectedBinding": {
+    "ok": true,
+    "property": "computedValue",
+    "value": 42,
+    "provenanceKind": "binding",
+    "bindingKind": "qmlBinding",
+    "expressionContains": "root.baseValue + 1",
+    "candidateIdentifier": "root.baseValue",
+    "sourceMethod": "qqmlbinding-source-location",
+    "dependency": {
+      "property": "baseValue",
+      "value": 41
+    }
+  }
+}

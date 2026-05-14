@@ -1,0 +1,3055 @@
+// Copyright (C) 2026 Penk Chen <penkia@gmail.com>
+// SPDX-License-Identifier: Apache-2.0
+
+#include "qmlagentclioutput.h"
+#include "qmlagentmcpoutput.h"
+#include "qmlagentmcpprotocol.h"
+
+#include <private/qqmldebugclient_p.h>
+#include <private/qqmldebugconnection_p.h>
+
+#include <QtCore/qcommandlineoption.h>
+#include <QtCore/qcommandlineparser.h>
+#include <QtCore/qcoreapplication.h>
+#include <QtCore/qcryptographichash.h>
+#include <QtCore/qdatetime.h>
+#include <QtCore/qdeadlinetimer.h>
+#include <QtCore/qdir.h>
+#include <QtCore/qfile.h>
+#include <QtCore/qfileinfo.h>
+#include <QtCore/qjsonarray.h>
+#include <QtCore/qjsondocument.h>
+#include <QtCore/qjsonobject.h>
+#include <QtCore/qjsonvalue.h>
+#include <QtCore/qlockfile.h>
+#include <QtCore/qqueue.h>
+#include <QtCore/qsavefile.h>
+#include <QtCore/qset.h>
+#include <QtCore/qsocketnotifier.h>
+#include <QtCore/qstandardpaths.h>
+#include <QtCore/qstringlist.h>
+#include <QtCore/qtextstream.h>
+#include <QtCore/qthread.h>
+#include <QtCore/qtimer.h>
+#include <QtCore/quuid.h>
+#include <QtNetwork/qabstractsocket.h>
+#include <QtNetwork/qlocalsocket.h>
+#include <QtNetwork/qtcpsocket.h>
+
+#include <cerrno>
+#include <cstdio>
+#include <fcntl.h>
+#include <memory>
+#include <optional>
+#include <signal.h>
+#include <unistd.h>
+
+static constexpr int DefaultMcpTargetPort = 3768;
+
+using QmlAgentMcp::jsonError;
+using QmlAgentMcp::jsonResponse;
+using QmlAgentMcp::toolErrorResult;
+using QmlAgentMcp::toolList;
+using QmlAgentMcp::toolResult;
+
+class QmlAgentClient : public QQmlDebugClient
+{
+    Q_OBJECT
+
+public:
+    explicit QmlAgentClient(QQmlDebugConnection *connection)
+        : QQmlDebugClient(QStringLiteral("QmlAgent"), connection)
+    {
+    }
+
+signals:
+    void received(const QByteArray &message);
+
+private:
+    void messageReceived(const QByteArray &message) override
+    {
+        emit received(message);
+    }
+};
+
+static QByteArray compactJson(const QJsonObject &object)
+{
+    return QJsonDocument(object).toJson(QJsonDocument::Compact);
+}
+
+static int fail(const QString &message)
+{
+    QTextStream(stderr) << message << Qt::endl;
+    return 1;
+}
+
+class QmlAgentTargetLease
+{
+public:
+    ~QmlAgentTargetLease() { release(); }
+    QmlAgentTargetLease() = default;
+    QmlAgentTargetLease(QmlAgentTargetLease &&) noexcept = default;
+    QmlAgentTargetLease &operator=(QmlAgentTargetLease &&) noexcept = default;
+
+    QmlAgentTargetLease(const QmlAgentTargetLease &) = delete;
+    QmlAgentTargetLease &operator=(const QmlAgentTargetLease &) = delete;
+
+    static QString tcpEndpoint(const QString &host, quint16 port)
+    {
+        return QStringLiteral("tcp:%1:%2").arg(host).arg(port);
+    }
+
+    static QString localSocketEndpoint(const QString &path)
+    {
+        const QFileInfo info(path);
+        const QString normalized = info.isRelative() ? path : info.absoluteFilePath();
+        return QStringLiteral("local:%1").arg(normalized);
+    }
+
+    bool acquire(const QString &endpoint, const QString &mode, QString *error)
+    {
+        release();
+
+        const QString lockPath = lockPathForEndpoint(endpoint, error);
+        if (lockPath.isEmpty())
+            return false;
+
+        auto lock = std::make_unique<QLockFile>(lockPath);
+        lock->setStaleLockTime(5000);
+        if (!lock->tryLock(0)) {
+            *error = conflictMessage(endpoint, mode, *lock);
+            return false;
+        }
+
+        m_endpoint = endpoint;
+        m_mode = mode;
+        m_lock = std::move(lock);
+        return true;
+    }
+
+    void release()
+    {
+        if (m_lock)
+            m_lock->unlock();
+        m_lock.reset();
+        m_endpoint.clear();
+        m_mode.clear();
+    }
+
+    bool isLocked() const { return bool(m_lock); }
+    QString endpoint() const { return m_endpoint; }
+    QString mode() const { return m_mode; }
+
+    QJsonObject toJson() const
+    {
+        QJsonObject object{
+            { QStringLiteral("owned"), isLocked() },
+        };
+        if (!m_endpoint.isEmpty())
+            object.insert(QStringLiteral("endpoint"), m_endpoint);
+        if (!m_mode.isEmpty())
+            object.insert(QStringLiteral("mode"), m_mode);
+        if (isLocked())
+            object.insert(QStringLiteral("ownerPid"), qint64(QCoreApplication::applicationPid()));
+        return object;
+    }
+
+private:
+    static QString leaseRoot(QString *error)
+    {
+        QString root = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
+        if (root.isEmpty())
+            root = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+        if (root.isEmpty()) {
+            *error = QStringLiteral("No writable runtime or application data location for QmlAgent target leases.");
+            return {};
+        }
+
+        const QString path = QDir(root).filePath(QStringLiteral("qmlagent/target-leases"));
+        QDir dir;
+        if (!dir.mkpath(path)) {
+            *error = QStringLiteral("Could not create QmlAgent target lease directory: %1").arg(path);
+            return {};
+        }
+        return path;
+    }
+
+    static QString lockPathForEndpoint(const QString &endpoint, QString *error)
+    {
+        const QString root = leaseRoot(error);
+        if (root.isEmpty())
+            return {};
+
+        const QByteArray digest = QCryptographicHash::hash(endpoint.toUtf8(),
+                                                           QCryptographicHash::Sha256)
+                                          .toHex();
+        return QDir(root).filePath(QString::fromLatin1(digest) + QStringLiteral(".lock"));
+    }
+
+    static QString conflictMessage(const QString &endpoint, const QString &mode,
+                                   QLockFile &lock)
+    {
+        qint64 pid = 0;
+        QString hostname;
+        QString appname;
+        const bool hasOwner = lock.getLockInfo(&pid, &hostname, &appname);
+
+        QString owner;
+        if (hasOwner) {
+            owner = QStringLiteral(" ownerPid=%1 ownerApp=%2 ownerHost=%3")
+                            .arg(pid)
+                            .arg(appname.isEmpty() ? QStringLiteral("<unknown>") : appname,
+                                 hostname.isEmpty() ? QStringLiteral("<unknown>") : hostname);
+        }
+
+        return QStringLiteral("QmlAgent target endpoint is already owned: %1.%2 "
+                              "Only one qmlagent-mcp gateway may attach "
+                              "to one Qt QML debug target. Use the existing MCP gateway, call "
+                              "qmlagent.disconnect on it, or relaunch the target before starting "
+                              "another %3 client.")
+                .arg(endpoint, owner, mode);
+    }
+
+    QString m_endpoint;
+    QString m_mode;
+    std::unique_ptr<QLockFile> m_lock;
+};
+
+static bool boolFromString(const QString &value, bool *ok)
+{
+    if (value == QLatin1String("true")) {
+        *ok = true;
+        return true;
+    }
+    if (value == QLatin1String("false")) {
+        *ok = true;
+        return false;
+    }
+
+    *ok = false;
+    return false;
+}
+
+static QJsonValue jsonValueForExpectedValue(const QString &text)
+{
+    if (text.size() >= 2) {
+        const QChar first = text.front();
+        const QChar last = text.back();
+        if ((first == QLatin1Char('"') && last == QLatin1Char('"'))
+                || (first == QLatin1Char('\'') && last == QLatin1Char('\''))) {
+            QString unquoted = text.mid(1, text.size() - 2);
+            unquoted.replace(QStringLiteral("\\\""), QStringLiteral("\""));
+            unquoted.replace(QStringLiteral("\\'"), QStringLiteral("'"));
+            unquoted.replace(QStringLiteral("\\\\"), QStringLiteral("\\"));
+            return unquoted;
+        }
+    }
+
+    bool ok = false;
+    const bool boolValue = boolFromString(text, &ok);
+    if (ok)
+        return boolValue;
+
+    const double number = text.toDouble(&ok);
+    if (ok)
+        return number;
+
+    return text;
+}
+
+struct Expectation
+{
+    QString property;
+    QString op;
+    QJsonValue value;
+    bool valid = false;
+};
+
+static Expectation parseExpectation(const QString &text)
+{
+    static const QStringList stringOperators{
+        QStringLiteral("startsWith"),
+        QStringLiteral("endsWith"),
+        QStringLiteral("contains"),
+    };
+    for (const QString &op : stringOperators) {
+        const QString token = QLatin1Char(' ') + op + QLatin1Char(' ');
+        const int index = text.indexOf(token);
+        if (index <= 0 || index + token.size() >= text.size())
+            continue;
+
+        return {
+            text.left(index).trimmed(),
+            op,
+            jsonValueForExpectedValue(text.mid(index + token.size()).trimmed()),
+            true,
+        };
+    }
+
+    static const QStringList operators{
+        QStringLiteral(">="),
+        QStringLiteral("<="),
+        QStringLiteral("!="),
+        QStringLiteral("="),
+        QStringLiteral(">"),
+        QStringLiteral("<"),
+    };
+
+    for (const QString &op : operators) {
+        const int index = text.indexOf(op);
+        if (index <= 0 || index + op.size() >= text.size())
+            continue;
+
+        return {
+            text.left(index).trimmed(),
+            op,
+            jsonValueForExpectedValue(text.mid(index + op.size()).trimmed()),
+            true,
+        };
+    }
+
+    return {};
+}
+
+static bool compareExpectedValues(const QJsonValue &actual, const QString &op,
+                                  const QJsonValue &expected)
+{
+    if (op == QLatin1String("="))
+        return actual == expected;
+    if (op == QLatin1String("!="))
+        return actual != expected;
+
+    if (op == QLatin1String("contains") || op == QLatin1String("startsWith")
+            || op == QLatin1String("endsWith")) {
+        if (!actual.isString() || !expected.isString())
+            return false;
+        const QString actualString = actual.toString();
+        const QString expectedString = expected.toString();
+        if (op == QLatin1String("contains"))
+            return actualString.contains(expectedString);
+        if (op == QLatin1String("startsWith"))
+            return actualString.startsWith(expectedString);
+        return actualString.endsWith(expectedString);
+    }
+
+    if (!actual.isDouble() || !expected.isDouble())
+        return false;
+
+    const double actualNumber = actual.toDouble();
+    const double expectedNumber = expected.toDouble();
+    if (op == QLatin1String(">"))
+        return actualNumber > expectedNumber;
+    if (op == QLatin1String(">="))
+        return actualNumber >= expectedNumber;
+    if (op == QLatin1String("<"))
+        return actualNumber < expectedNumber;
+    if (op == QLatin1String("<="))
+        return actualNumber <= expectedNumber;
+
+    return false;
+}
+
+static QJsonValue valueForExpectation(const QJsonObject &queryResponse, const Expectation &expectation,
+                                      int *matchCount, QJsonObject *node)
+{
+    const QJsonObject result = queryResponse.value(QStringLiteral("result")).toObject();
+    const QJsonArray matches = result.value(QStringLiteral("matches")).toArray();
+    if (matchCount)
+        *matchCount = matches.size();
+    if (matches.isEmpty())
+        return {};
+
+    const QJsonObject firstNode = matches.first().toObject();
+    if (node)
+        *node = firstNode;
+    if (firstNode.contains(expectation.property))
+        return firstNode.value(expectation.property);
+    return firstNode.value(QStringLiteral("properties")).toObject().value(expectation.property);
+}
+
+static QJsonObject verificationObject(const QJsonObject &queryResponse,
+                                      const Expectation &expectation)
+{
+    int matchCount = 0;
+    const QJsonValue actual = valueForExpectation(queryResponse, expectation, &matchCount, nullptr);
+    const bool matched = compareExpectedValues(actual, expectation.op, expectation.value);
+
+    return {
+        { QStringLiteral("passed"), matched },
+        { QStringLiteral("property"), expectation.property },
+        { QStringLiteral("operator"), expectation.op },
+        { QStringLiteral("expected"), expectation.value },
+        { QStringLiteral("actual"), actual },
+        { QStringLiteral("matchCount"), matchCount },
+    };
+}
+
+static QJsonObject makeRequest(int id, const QString &requestMethod, const QJsonObject &requestParams)
+{
+    return {
+        { QStringLiteral("jsonrpc"), QStringLiteral("2.0") },
+        { QStringLiteral("id"), id },
+        { QStringLiteral("method"), requestMethod },
+        { QStringLiteral("params"), requestParams },
+    };
+}
+
+static QString qmlAgentDataRoot()
+{
+    QString base = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+    if (base.isEmpty())
+        base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    if (base.isEmpty())
+        base = QStandardPaths::writableLocation(QStandardPaths::GenericStateLocation);
+    if (base.isEmpty())
+        base = QDir::homePath();
+    return QDir(base).filePath(QStringLiteral("QmlAgent"));
+}
+
+static QString qmlAgentTempRoot()
+{
+    QString base = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+    if (base.isEmpty())
+        base = QDir::tempPath();
+    const QString canonicalBase = QFileInfo(base).canonicalFilePath();
+    if (!canonicalBase.isEmpty())
+        base = canonicalBase;
+    return QDir(base).filePath(QStringLiteral("QmlAgent"));
+}
+
+struct LauncherSession
+{
+    QString id;
+    QJsonObject metadata;
+    QJsonObject status;
+};
+
+static QStringList globalLauncherRegistryDirs()
+{
+    return {
+        QDir(qmlAgentTempRoot()).filePath(QStringLiteral("launcher-sessions")),
+        QDir(qmlAgentDataRoot()).filePath(QStringLiteral("launcher-sessions")),
+    };
+}
+
+static QString launcherExitDir()
+{
+    return QDir(qmlAgentTempRoot()).filePath(QStringLiteral("launcher-exits"));
+}
+
+static QJsonArray recentLauncherExitReports()
+{
+    QJsonArray reports;
+    const QDir dir(launcherExitDir());
+    const QDateTime now = QDateTime::currentDateTimeUtc();
+    const QStringList entries = dir.entryList({ QStringLiteral("*.json") }, QDir::Files,
+                                              QDir::Time);
+    for (const QString &entry : entries) {
+        const QString path = dir.filePath(entry);
+        const QFileInfo info(path);
+        if (info.lastModified().toUTC().secsTo(now) > 600) {
+            QFile::remove(path);
+            continue;
+        }
+
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly))
+            continue;
+        QJsonParseError parseError;
+        const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &parseError);
+        if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+            QFile::remove(path);
+            continue;
+        }
+        reports.append(document.object());
+    }
+    return reports;
+}
+
+static QStringList launcherRegistryDirs()
+{
+    QStringList dirs;
+    const QString workspaceStateDir = QDir::current().filePath(QStringLiteral(".qmlagent"));
+    if (QFileInfo::exists(workspaceStateDir))
+        dirs.append(QDir(workspaceStateDir).filePath(QStringLiteral("launcher-sessions")));
+
+    for (const QString &globalDir : globalLauncherRegistryDirs()) {
+        if (!dirs.contains(globalDir))
+            dirs.append(globalDir);
+    }
+    return dirs;
+}
+
+static bool processExists(qint64 pid)
+{
+    if (pid <= 0)
+        return false;
+    errno = 0;
+    return ::kill(pid_t(pid), 0) == 0 || errno == EPERM;
+}
+
+static bool terminatePid(qint64 pid)
+{
+    if (pid <= 0 || !processExists(pid))
+        return false;
+    return ::kill(pid_t(pid), SIGTERM) == 0;
+}
+
+static QJsonObject readLauncherMailboxResponse(const QString &responsePath, int timeoutMs,
+                                               QString *error)
+{
+    QDeadlineTimer deadline(timeoutMs);
+    while (!deadline.hasExpired()) {
+        QFile responseFile(responsePath);
+        if (responseFile.open(QIODevice::ReadOnly)) {
+            const QByteArray payload = responseFile.readAll().trimmed();
+            responseFile.close();
+            QFile::remove(responsePath);
+
+            QJsonParseError parseError;
+            const QJsonDocument document = QJsonDocument::fromJson(payload, &parseError);
+            if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+                *error = QStringLiteral("Invalid qmlagent-launcher mailbox response.");
+                return {};
+            }
+            return document.object();
+        }
+
+        QThread::msleep(10);
+    }
+
+    *error = QStringLiteral("Timed out waiting for qmlagent-launcher mailbox response.");
+    return {};
+}
+
+static QJsonObject sendLauncherMailboxControlRequest(const QString &mailboxDir, int timeoutMs,
+                                                     const QString &method,
+                                                     const QJsonObject &params, QString *error)
+{
+    if (mailboxDir.isEmpty()) {
+        *error = QStringLiteral("qmlagent-launcher session has no control mailbox.");
+        return {};
+    }
+
+    if (!QDir().mkpath(mailboxDir)) {
+        *error = QStringLiteral("Could not open qmlagent-launcher control mailbox: %1")
+                         .arg(mailboxDir);
+        return {};
+    }
+
+    const QString token = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    const QString requestPath = QDir(mailboxDir).filePath(
+            QStringLiteral("request-%1.json").arg(token));
+    const QString replyDir = QDir(qmlAgentTempRoot()).filePath(
+            QStringLiteral("mailbox-replies/%1").arg(qint64(QCoreApplication::applicationPid())));
+    if (!QDir().mkpath(replyDir)) {
+        *error = QStringLiteral("Could not create qmlagent-launcher mailbox reply directory: %1")
+                         .arg(replyDir);
+        return {};
+    }
+    const QString responsePath = QDir(replyDir).filePath(
+            QStringLiteral("response-%1.json").arg(token));
+
+    QSaveFile requestFile(requestPath);
+    if (!requestFile.open(QIODevice::WriteOnly)) {
+        *error = QStringLiteral("Could not write qmlagent-launcher mailbox request: %1")
+                         .arg(requestPath);
+        return {};
+    }
+    QJsonObject request = makeRequest(1, method, params);
+    request.insert(QStringLiteral("replyTo"), responsePath);
+    requestFile.write(compactJson(request));
+    requestFile.write("\n");
+    if (!requestFile.commit()) {
+        *error = QStringLiteral("Could not publish qmlagent-launcher mailbox request: %1")
+                         .arg(requestPath);
+        return {};
+    }
+
+    return readLauncherMailboxResponse(responsePath, timeoutMs, error);
+}
+
+static QJsonObject sendLauncherControlRequest(const QJsonObject &metadata, int timeoutMs,
+                                              const QString &method, const QJsonObject &params,
+                                              QString *error)
+{
+    const QString mailboxDir = metadata.value(QStringLiteral("controlMailbox")).toString();
+    if (!mailboxDir.isEmpty())
+        return sendLauncherMailboxControlRequest(mailboxDir, timeoutMs, method, params, error);
+
+    *error = QStringLiteral("qmlagent-launcher session has no supported control mailbox. "
+                            "Restart the session with the current qmlagent-launcher.");
+    return {};
+}
+
+static bool hasLauncherControlEndpoint(const QJsonObject &metadata)
+{
+    return !metadata.value(QStringLiteral("controlMailbox")).toString().isEmpty();
+}
+
+static QJsonObject launcherControlEndpointSummary(const QJsonObject &metadata)
+{
+    const QString mailboxDir = metadata.value(QStringLiteral("controlMailbox")).toString();
+    if (!mailboxDir.isEmpty()) {
+        return {
+            { QStringLiteral("kind"), QStringLiteral("fileMailbox") },
+            { QStringLiteral("path"), mailboxDir },
+        };
+    }
+
+    return {
+        { QStringLiteral("kind"), QStringLiteral("none") },
+    };
+}
+
+static QJsonObject launcherControlEndpointSummary(const LauncherSession &session)
+{
+    QJsonObject endpoint = launcherControlEndpointSummary(session.metadata);
+    const QJsonObject statusEndpoint = session.status.value(QStringLiteral("controlEndpoint")).toObject();
+    if (!statusEndpoint.isEmpty())
+        endpoint = statusEndpoint;
+    return endpoint;
+}
+
+static QList<LauncherSession> discoverLauncherSessions(int timeoutMs)
+{
+    QList<LauncherSession> sessions;
+    QSet<QString> seenSessionIds;
+    for (const QString &registryDir : launcherRegistryDirs()) {
+        const QDir dir(registryDir);
+        const QStringList entries = dir.entryList({ QStringLiteral("*.json") }, QDir::Files);
+        for (const QString &entry : entries) {
+            const QString path = dir.filePath(entry);
+            QFile file(path);
+            if (!file.open(QIODevice::ReadOnly))
+                continue;
+            QJsonParseError parseError;
+            const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &parseError);
+            if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+                QFile::remove(path);
+                continue;
+            }
+
+            const QJsonObject metadata = document.object();
+            const QString id = metadata.value(QStringLiteral("launcherSession")).toString();
+            if (id.isEmpty() || !hasLauncherControlEndpoint(metadata)) {
+                QFile::remove(path);
+                continue;
+            }
+            if (seenSessionIds.contains(id))
+                continue;
+            const qint64 launcherPid = metadata.value(QStringLiteral("launcherPid")).toInteger(-1);
+            if (launcherPid > 0 && !processExists(launcherPid)) {
+                QFile::remove(path);
+                continue;
+            }
+
+            QString statusError;
+            const QJsonObject statusResponse = sendLauncherControlRequest(
+                    metadata, qMin(timeoutMs, 1000), QStringLiteral("Session.status"), {},
+                    &statusError);
+            QJsonObject status;
+            if (statusError.isEmpty()) {
+                status = statusResponse.value(QStringLiteral("result")).toObject();
+                status.insert(QStringLiteral("controlReachable"), true);
+            } else {
+                status = {
+                    { QStringLiteral("controlReachable"), false },
+                    { QStringLiteral("controlError"), statusError },
+                    { QStringLiteral("sessionType"), metadata.value(QStringLiteral("sessionType")) },
+                    { QStringLiteral("launchCommand"), metadata.value(QStringLiteral("launchCommand")) },
+                    { QStringLiteral("reloadPreviewSupported"), metadata.value(QStringLiteral("reloadPreviewSupported")) },
+                };
+            }
+            seenSessionIds.insert(id);
+            sessions.append({ id, metadata, status });
+        }
+    }
+    return sessions;
+}
+
+static QJsonArray launcherSessionSummaries(const QList<LauncherSession> &sessions)
+{
+    QJsonArray summaries;
+    for (const LauncherSession &session : sessions) {
+        summaries.append(QJsonObject{
+            { QStringLiteral("launcherSession"), session.id },
+            { QStringLiteral("controlReachable"), session.status.value(QStringLiteral("controlReachable")).toBool(true) },
+            { QStringLiteral("controlError"), session.status.value(QStringLiteral("controlError")) },
+            { QStringLiteral("controlEndpoint"), launcherControlEndpointSummary(session) },
+            { QStringLiteral("sessionType"), session.status.value(QStringLiteral("sessionType")) },
+            { QStringLiteral("launchCommand"), session.status.value(QStringLiteral("launchCommand")) },
+            { QStringLiteral("reloadPreviewSupported"), session.status.value(QStringLiteral("reloadPreviewSupported")) },
+            { QStringLiteral("previewRoot"), session.status.value(QStringLiteral("previewRoot")) },
+            { QStringLiteral("targetPid"), session.status.value(QStringLiteral("targetPid")) },
+            { QStringLiteral("services"), session.status.value(QStringLiteral("services")) },
+        });
+    }
+    return summaries;
+}
+
+static bool resolveLauncherSession(int timeoutMs, LauncherSession *selected, QString *error)
+{
+    QList<LauncherSession> reachable;
+    for (const LauncherSession &session : discoverLauncherSessions(timeoutMs)) {
+        if (session.status.value(QStringLiteral("controlReachable")).toBool(true))
+            reachable.append(session);
+    }
+    if (reachable.isEmpty()) {
+        *error = QStringLiteral("No live qmlagent-launcher session found.\n\n"
+                                "Start one of these first:\n"
+                                "  qmlagent-launcher preview <Main.qml>\n"
+                                "  qmlagent-launcher app <executable> [-- args...]");
+        return false;
+    }
+    if (reachable.size() > 1) {
+        *error = QStringLiteral("Multiple live qmlagent-launcher sessions found. "
+                                "Stop one session or add session selection support. Sessions: %1")
+                         .arg(QString::fromUtf8(QJsonDocument(launcherSessionSummaries(reachable))
+                                                    .toJson(QJsonDocument::Compact)));
+        return false;
+    }
+    *selected = reachable.first();
+    return true;
+}
+
+static QJsonObject stopUnreachableLauncherFallback(const LauncherSession &session)
+{
+    const qint64 launcherPid = session.metadata.value(QStringLiteral("launcherPid")).toInteger(-1);
+    const qint64 targetPid = session.metadata.value(QStringLiteral("targetPid")).toInteger(-1);
+    const bool launcherSignalSent = terminatePid(launcherPid);
+    const bool targetSignalSent = terminatePid(targetPid);
+    for (int i = 0; i < 20 && (processExists(launcherPid) || processExists(targetPid)); ++i)
+        QThread::msleep(50);
+
+    return {
+        { QStringLiteral("action"), QStringLiteral("stop") },
+        { QStringLiteral("ok"), launcherSignalSent || targetSignalSent },
+        { QStringLiteral("mode"), QStringLiteral("process-fallback") },
+        { QStringLiteral("reason"), QStringLiteral("launcher control channel was not reachable") },
+        { QStringLiteral("launcherPid"), launcherPid },
+        { QStringLiteral("targetPid"), targetPid },
+        { QStringLiteral("launcherSignalSent"), launcherSignalSent },
+        { QStringLiteral("targetSignalSent"), targetSignalSent },
+        { QStringLiteral("launcherStillRunning"), processExists(launcherPid) },
+        { QStringLiteral("targetStillRunning"), processExists(targetPid) },
+    };
+}
+
+static bool resolveLauncherSessionForStop(int timeoutMs, LauncherSession *selected,
+                                          QJsonObject *fallbackResult, QString *error)
+{
+    QList<LauncherSession> sessions = discoverLauncherSessions(timeoutMs);
+    QList<LauncherSession> reachable;
+    for (const LauncherSession &session : sessions) {
+        if (session.status.value(QStringLiteral("controlReachable")).toBool(true))
+            reachable.append(session);
+    }
+
+    if (reachable.size() == 1) {
+        *selected = reachable.first();
+        return true;
+    }
+    if (reachable.size() > 1) {
+        *error = QStringLiteral("Multiple live qmlagent-launcher sessions found. "
+                                "Stop one session or add session selection support. Sessions: %1")
+                         .arg(QString::fromUtf8(QJsonDocument(launcherSessionSummaries(reachable))
+                                                    .toJson(QJsonDocument::Compact)));
+        return false;
+    }
+
+    QList<LauncherSession> processBacked;
+    for (const LauncherSession &session : sessions) {
+        const qint64 launcherPid = session.metadata.value(QStringLiteral("launcherPid")).toInteger(-1);
+        const qint64 targetPid = session.metadata.value(QStringLiteral("targetPid")).toInteger(-1);
+        if (processExists(launcherPid) || processExists(targetPid))
+            processBacked.append(session);
+    }
+    if (processBacked.size() == 1) {
+        *fallbackResult = stopUnreachableLauncherFallback(processBacked.first());
+        return false;
+    }
+
+    if (sessions.isEmpty()) {
+        *error = QStringLiteral("No live qmlagent-launcher session found.\n\n"
+                                "Start one of these first:\n"
+                                "  qmlagent-launcher preview <Main.qml>\n"
+                                "  qmlagent-launcher app <executable> [-- args...]");
+    } else {
+        *error = QStringLiteral("No reachable qmlagent-launcher session found. Sessions: %1")
+                         .arg(QString::fromUtf8(QJsonDocument(launcherSessionSummaries(sessions))
+                                                    .toJson(QJsonDocument::Compact)));
+    }
+    return false;
+}
+
+static void printJsonObject(const QJsonObject &object, const QString &format)
+{
+    const QJsonDocument::JsonFormat jsonFormat = format == QLatin1String("compact")
+            ? QJsonDocument::Compact
+            : QJsonDocument::Indented;
+    QTextStream stream(stdout);
+    stream << QString::fromUtf8(QJsonDocument(object).toJson(jsonFormat));
+    if (jsonFormat == QJsonDocument::Compact)
+        stream << Qt::endl;
+}
+
+static QString argumentValue(const QStringList &arguments, const QString &name,
+                             const QString &defaultValue = {})
+{
+    const int index = arguments.indexOf(name);
+    if (index >= 0 && index + 1 < arguments.size())
+        return arguments.at(index + 1);
+    return defaultValue;
+}
+
+static void printCallHelp()
+{
+    QTextStream stream(stdout);
+    stream << "Usage:\n"
+           << "  qmlagentctl call <Method.Name> --params '{...}' [--format compact|pretty]\n\n"
+           << "QmlAgent protocol methods:\n";
+    const QStringList methods{
+        QStringLiteral("Session.getInfo"),
+        QStringLiteral("Session.configure"),
+        QStringLiteral("Session.reset"),
+        QStringLiteral("Log.enable"),
+        QStringLiteral("Log.getEntries"),
+        QStringLiteral("Log.clear"),
+        QStringLiteral("UI.getTree"),
+        QStringLiteral("UI.query"),
+        QStringLiteral("UI.waitFor"),
+        QStringLiteral("UI.describeNode"),
+        QStringLiteral("UI.getBoxModel"),
+        QStringLiteral("UI.subscribe"),
+        QStringLiteral("UI.unsubscribe"),
+        QStringLiteral("Diagnostics.analyzeNode"),
+        QStringLiteral("Diagnostics.analyzeTree"),
+        QStringLiteral("Diagnostics.analyzeBinding"),
+        QStringLiteral("Input.clickNode"),
+        QStringLiteral("Input.wheel"),
+        QStringLiteral("Input.focusNode"),
+        QStringLiteral("Input.dispatchMouseEvent"),
+        QStringLiteral("Input.dragNode"),
+        QStringLiteral("Input.dispatchTouchEvent"),
+        QStringLiteral("Input.dispatchKeyEvent"),
+        QStringLiteral("Input.typeText"),
+        QStringLiteral("Render.captureScreenshot"),
+        QStringLiteral("Runtime.setProperty"),
+        QStringLiteral("Runtime.invokeMethod"),
+        QStringLiteral("Source.resolveNode"),
+    };
+    for (const QString &method : methods)
+        stream << "  " << method << '\n';
+    stream << "\nExamples:\n"
+           << "  qmlagentctl call UI.query --params '{\"selector\":\"id=\\\"saveButton\\\"\"}'\n"
+           << "  qmlagentctl call UI.waitFor --params '{\"selector\":\"id=\\\"popup\\\"\",\"until\":{\"state\":\"found\"}}'\n"
+           << "  qmlagentctl call Diagnostics.analyzeBinding --params '{\"selector\":\"id=\\\"panel\\\"\",\"property\":\"x\"}'\n"
+           << "  qmlagentctl call Render.captureScreenshot --params '{\"omitData\":true,\"scale\":0.5}'\n";
+}
+
+static int runCtlSubcommand(const QStringList &arguments)
+{
+    if (arguments.size() < 2 || arguments.at(1) == QLatin1String("help")
+            || arguments.at(1) == QLatin1String("--help")) {
+        QTextStream(stdout)
+                << "Usage:\n"
+                << "  qmlagentctl sessions\n"
+                << "  qmlagentctl status\n"
+                << "  qmlagentctl query <selector> [--property name] [--format compact|pretty]\n"
+                << "  qmlagentctl binding <selector> --property name [--format compact|pretty]\n"
+                << "  qmlagentctl click <selector>\n"
+                << "  qmlagentctl replace-text <selector> --text value [--clear]\n"
+                << "  qmlagentctl wait <selector> --state found|notFound [--timeout ms]\n"
+                << "  qmlagentctl screenshot [--window-id n] [--scale 0.5] [--region x,y,w,h] [--include-data] [--out file.png]\n"
+                << "  qmlagentctl reload-preview\n"
+                << "  qmlagentctl stop\n"
+                << "  qmlagentctl call <Method.Name> --params '{...}'\n\n"
+                << "Screenshot is fallback visual evidence. Use structural UI,\n"
+                << "diagnostics, source, log, and input/workflow evidence first;\n"
+                << "--include-data is opt-in to preserve agent context.\n"
+                << "--scale/--region keep fallback visual bytes bounded.\n"
+                << "--out writes PNG bytes to a file without printing base64 data.\n";
+        return 0;
+    }
+
+    const QString command = arguments.at(1);
+    const QString format = argumentValue(arguments, QStringLiteral("--format"), QStringLiteral("pretty"));
+    bool ok = false;
+    const int timeoutMs = argumentValue(arguments, QStringLiteral("--timeout"), QStringLiteral("5000")).toInt(&ok);
+    if (!ok || timeoutMs <= 0)
+        return fail(QStringLiteral("--timeout must be a positive integer."));
+
+    if (command == QLatin1String("sessions")) {
+        const QList<LauncherSession> sessions = discoverLauncherSessions(timeoutMs);
+        const QJsonArray recentExits = recentLauncherExitReports();
+        printJsonObject({
+            { QStringLiteral("ok"), true },
+            { QStringLiteral("sessionCount"), sessions.size() },
+            { QStringLiteral("sessions"), launcherSessionSummaries(sessions) },
+            { QStringLiteral("recentExitCount"), recentExits.size() },
+            { QStringLiteral("recentExits"), recentExits },
+        }, format);
+        return 0;
+    }
+
+    static const QSet<QString> launcherCommands{
+        QStringLiteral("status"),
+        QStringLiteral("stop"),
+        QStringLiteral("reload-preview"),
+        QStringLiteral("call"),
+        QStringLiteral("query"),
+        QStringLiteral("inspect"),
+        QStringLiteral("binding"),
+        QStringLiteral("click"),
+        QStringLiteral("replace-text"),
+        QStringLiteral("wait"),
+        QStringLiteral("screenshot"),
+    };
+    if (!launcherCommands.contains(command))
+        return fail(QStringLiteral("Unknown qmlagentctl command '%1'. Run qmlagentctl help.").arg(command));
+
+    if (command == QLatin1String("call")
+            && (arguments.size() < 3 || arguments.at(2) == QLatin1String("--help")
+                || arguments.at(2) == QLatin1String("help"))) {
+        printCallHelp();
+        return 0;
+    }
+
+    LauncherSession launcher;
+    QString launcherError;
+    QJsonObject stopFallbackResult;
+    if (command == QLatin1String("stop")) {
+        if (!resolveLauncherSessionForStop(timeoutMs, &launcher, &stopFallbackResult,
+                                           &launcherError)) {
+            if (!stopFallbackResult.isEmpty()) {
+                printJsonObject(stopFallbackResult, format);
+                return stopFallbackResult.value(QStringLiteral("ok")).toBool(false) ? 0 : 1;
+            }
+            return fail(launcherError);
+        }
+    } else if (!resolveLauncherSession(timeoutMs, &launcher, &launcherError)) {
+        return fail(launcherError);
+    }
+
+    QString controlMethod;
+    QJsonObject controlParams;
+    QString screenshotOutputPath;
+    bool screenshotKeepDataInOutput = false;
+    if (command == QLatin1String("status")) {
+        controlMethod = QStringLiteral("Session.status");
+    } else if (command == QLatin1String("stop")) {
+        controlMethod = QStringLiteral("Session.stop");
+    } else if (command == QLatin1String("reload-preview")) {
+        controlMethod = QStringLiteral("Preview.reload");
+        controlParams = {
+            { QStringLiteral("timeoutMs"), timeoutMs },
+        };
+    } else {
+        QString method;
+        QJsonObject params;
+        if (command == QLatin1String("call")) {
+            if (arguments.size() < 3)
+                return fail(QStringLiteral("qmlagentctl call requires a JSON-RPC method name."));
+            method = arguments.at(2);
+            const QByteArray paramsBytes = argumentValue(arguments, QStringLiteral("--params"),
+                                                        QStringLiteral("{}")).toUtf8();
+            QJsonParseError parseError;
+            const QJsonDocument document = QJsonDocument::fromJson(paramsBytes, &parseError);
+            if (parseError.error != QJsonParseError::NoError || !document.isObject())
+                return fail(QStringLiteral("--params must be a JSON object."));
+            params = document.object();
+        } else if (command == QLatin1String("query") || command == QLatin1String("inspect")) {
+            if (arguments.size() < 3)
+                return fail(QStringLiteral("qmlagentctl %1 requires a selector.").arg(command));
+            method = QStringLiteral("UI.query");
+            QJsonArray properties;
+            const QString property = argumentValue(arguments, QStringLiteral("--property"));
+            if (!property.isEmpty())
+                properties.append(property);
+            params = {
+                { QStringLiteral("selector"), arguments.at(2) },
+                { QStringLiteral("includeSource"), command == QLatin1String("inspect") },
+                { QStringLiteral("properties"), properties },
+            };
+            if (!properties.isEmpty())
+                params.insert(QStringLiteral("fields"), QJsonArray{
+                    QStringLiteral("qmlId"),
+                    QStringLiteral("objectName"),
+                    QStringLiteral("properties"),
+                });
+        } else if (command == QLatin1String("binding")) {
+            if (arguments.size() < 3)
+                return fail(QStringLiteral("qmlagentctl binding requires a selector."));
+            const QString property = argumentValue(arguments, QStringLiteral("--property"));
+            if (property.isEmpty())
+                return fail(QStringLiteral("qmlagentctl binding requires --property name."));
+            method = QStringLiteral("Diagnostics.analyzeBinding");
+            params = {
+                { QStringLiteral("selector"), arguments.at(2) },
+                { QStringLiteral("property"), property },
+            };
+        } else if (command == QLatin1String("click")) {
+            if (arguments.size() < 3)
+                return fail(QStringLiteral("qmlagentctl click requires a selector."));
+            method = QStringLiteral("Input.clickNode");
+            params = { { QStringLiteral("selector"), arguments.at(2) } };
+        } else if (command == QLatin1String("replace-text")) {
+            if (arguments.size() < 3)
+                return fail(QStringLiteral("qmlagentctl replace-text requires a selector."));
+            const bool clear = arguments.contains(QStringLiteral("--clear"));
+            const QString text = argumentValue(arguments, QStringLiteral("--text"));
+            if (!clear && text.isEmpty())
+                return fail(QStringLiteral("qmlagentctl replace-text requires --text value or --clear."));
+            method = QStringLiteral("Input.typeText");
+            params = {
+                { QStringLiteral("selector"), arguments.at(2) },
+                { QStringLiteral("text"), clear ? QString() : text },
+                { QStringLiteral("replaceExisting"), true },
+            };
+        } else if (command == QLatin1String("wait")) {
+            if (arguments.size() < 3)
+                return fail(QStringLiteral("qmlagentctl wait requires a selector."));
+            method = QStringLiteral("UI.waitFor");
+            params = {
+                { QStringLiteral("selector"), arguments.at(2) },
+                { QStringLiteral("until"), QJsonObject{
+                    { QStringLiteral("state"), argumentValue(arguments, QStringLiteral("--state"), QStringLiteral("found")) },
+                } },
+                { QStringLiteral("timeoutMs"), timeoutMs },
+            };
+        } else if (command == QLatin1String("screenshot")) {
+            method = QStringLiteral("Render.captureScreenshot");
+            const QString windowId = argumentValue(arguments, QStringLiteral("--window-id"));
+            screenshotOutputPath = argumentValue(arguments, QStringLiteral("--out"));
+            screenshotKeepDataInOutput = arguments.contains(QStringLiteral("--include-data"));
+            const QString scaleText = argumentValue(arguments, QStringLiteral("--scale"));
+            if (!scaleText.isEmpty()) {
+                bool scaleOk = false;
+                const double scale = scaleText.toDouble(&scaleOk);
+                if (!scaleOk || scale <= 0.0 || scale > 1.0)
+                    return fail(QStringLiteral("--scale must be a number in (0, 1]."));
+                params.insert(QStringLiteral("scale"), scale);
+            }
+            const QString regionText = argumentValue(arguments, QStringLiteral("--region"));
+            if (!regionText.isEmpty()) {
+                const QStringList parts = regionText.split(QLatin1Char(','));
+                if (parts.size() != 4)
+                    return fail(QStringLiteral("--region must be x,y,width,height."));
+                bool regionOk = true;
+                QJsonArray values;
+                for (const QString &part : parts) {
+                    bool valueOk = false;
+                    const double value = part.trimmed().toDouble(&valueOk);
+                    regionOk = regionOk && valueOk;
+                    values.append(value);
+                }
+                if (!regionOk || values.at(2).toDouble() <= 0.0 || values.at(3).toDouble() <= 0.0)
+                    return fail(QStringLiteral("--region must contain positive width and height."));
+                params.insert(QStringLiteral("region"), QJsonObject{
+                    { QStringLiteral("x"), values.at(0) },
+                    { QStringLiteral("y"), values.at(1) },
+                    { QStringLiteral("width"), values.at(2) },
+                    { QStringLiteral("height"), values.at(3) },
+                });
+            }
+            if (!windowId.isEmpty()) {
+                bool windowOk = false;
+                const int id = windowId.toInt(&windowOk);
+                if (!windowOk || id <= 0)
+                    return fail(QStringLiteral("--window-id must be a positive integer."));
+                params.insert(QStringLiteral("windowId"), id);
+            }
+            params.insert(QStringLiteral("omitData"),
+                          screenshotOutputPath.isEmpty() && !screenshotKeepDataInOutput);
+        }
+
+        controlMethod = QStringLiteral("QmlAgent.request");
+        controlParams = {
+            { QStringLiteral("method"), method },
+            { QStringLiteral("params"), params },
+        };
+    }
+
+    QString controlError;
+    const QJsonObject response = sendLauncherControlRequest(launcher.metadata, timeoutMs,
+                                                            controlMethod, controlParams,
+                                                            &controlError);
+    if (!controlError.isEmpty())
+        return fail(controlError);
+
+    QJsonObject result = response.value(QStringLiteral("result")).toObject();
+    if (command == QLatin1String("screenshot") && !screenshotOutputPath.isEmpty()) {
+        QJsonObject screenshot = result.value(QStringLiteral("result")).toObject();
+        if (!screenshot.value(QStringLiteral("captured")).toBool(false))
+            return fail(QStringLiteral("Screenshot capture failed: %1")
+                                .arg(screenshot.value(QStringLiteral("reason")).toString(
+                                        QStringLiteral("unknown"))));
+
+        const QString data = screenshot.value(QStringLiteral("data")).toString();
+        if (data.isEmpty())
+            return fail(QStringLiteral("Screenshot response did not include PNG data."));
+
+        const QByteArray png = QByteArray::fromBase64(data.toLatin1());
+        if (png.isEmpty())
+            return fail(QStringLiteral("Screenshot response contained invalid PNG data."));
+
+        const QFileInfo outputInfo(screenshotOutputPath);
+        const QDir outputDir = outputInfo.absoluteDir();
+        if (!outputDir.exists() && !QDir().mkpath(outputDir.absolutePath()))
+            return fail(QStringLiteral("Failed to create screenshot output directory '%1'.")
+                                .arg(outputDir.absolutePath()));
+
+        QFile file(screenshotOutputPath);
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+            return fail(QStringLiteral("Failed to open screenshot output '%1': %2")
+                                .arg(screenshotOutputPath, file.errorString()));
+        if (file.write(png) != png.size())
+            return fail(QStringLiteral("Failed to write screenshot output '%1': %2")
+                                .arg(screenshotOutputPath, file.errorString()));
+        file.close();
+
+        screenshot.insert(QStringLiteral("writtenTo"), outputInfo.absoluteFilePath());
+        screenshot.insert(QStringLiteral("bytesWritten"), png.size());
+        if (!screenshotKeepDataInOutput) {
+            screenshot.remove(QStringLiteral("data"));
+            screenshot.insert(QStringLiteral("dataOmitted"), true);
+        }
+        result.insert(QStringLiteral("result"), screenshot);
+    }
+
+    printJsonObject(result.isEmpty() ? response : result, format);
+    const QJsonObject error = result.value(QStringLiteral("error")).toObject();
+    if (!error.isEmpty())
+        return 2;
+    return 0;
+}
+
+static QJsonObject groupedWorkflowReport(const QString &kind,
+                                         const QString &targetSelector,
+                                         const QString &key,
+                                         const QString &expectedSelector,
+                                         const Expectation &expectation,
+                                         const QJsonObject &targetQuery,
+                                         const QJsonObject &beforeQuery,
+                                         const QJsonObject &input,
+                                         const QJsonArray &events,
+                                         const QJsonObject &afterQuery)
+{
+    int beforeMatchCount = 0;
+    int afterMatchCount = 0;
+    QJsonObject beforeNode;
+    QJsonObject afterNode;
+    const QJsonValue beforeActual = valueForExpectation(beforeQuery, expectation,
+                                                        &beforeMatchCount, &beforeNode);
+    const QJsonValue afterActual = valueForExpectation(afterQuery, expectation,
+                                                       &afterMatchCount, &afterNode);
+    QJsonObject verification = verificationObject(afterQuery, expectation);
+    verification.insert(QStringLiteral("before"), beforeActual);
+    verification.insert(QStringLiteral("after"), afterActual);
+    verification.insert(QStringLiteral("beforeMatchCount"), beforeMatchCount);
+
+    const QJsonObject inputResult = input.value(QStringLiteral("result")).toObject();
+    const bool delivered = inputResult.value(QStringLiteral("delivered")).toBool();
+    const bool passed = verification.value(QStringLiteral("passed")).toBool();
+    const bool unchanged = beforeActual == afterActual;
+
+    QJsonArray issues;
+    if (!delivered) {
+        const QJsonArray diagnostics = inputResult.value(QStringLiteral("diagnostics")).toArray();
+        for (const QJsonValue &diagnostic : diagnostics) {
+            QJsonObject issue = diagnostic.toObject();
+            issue.insert(QStringLiteral("phase"), QStringLiteral("input"));
+            issues.append(issue);
+        }
+    }
+
+    if (delivered && !passed && unchanged) {
+        QJsonArray evidence{
+            QStringLiteral("input.delivered=true"),
+            QStringLiteral("events=%1").arg(events.size()),
+            QStringLiteral("expected %1%2%3")
+                    .arg(expectation.property, expectation.op,
+                         jsonValueToSummaryString(expectation.value)),
+            QStringLiteral("before.%1=%2")
+                    .arg(expectation.property, jsonValueToSummaryString(beforeActual)),
+            QStringLiteral("after.%1=%2")
+                    .arg(expectation.property, jsonValueToSummaryString(afterActual)),
+        };
+
+        QJsonObject issue{
+            { QStringLiteral("id"), QStringLiteral("state.no_change_after_action") },
+            { QStringLiteral("severity"), QStringLiteral("error") },
+            { QStringLiteral("confidence"), 0.95 },
+            { QStringLiteral("message"),
+              QStringLiteral("Input was delivered but the expected post-action state did not change.") },
+            { QStringLiteral("evidence"), evidence },
+        };
+
+        const QJsonArray targetMatches = targetQuery.value(QStringLiteral("result")).toObject()
+                .value(QStringLiteral("matches")).toArray();
+        if (!targetMatches.isEmpty()) {
+            const QJsonObject targetNode = targetMatches.first().toObject();
+            issue.insert(QStringLiteral("targetNodeId"),
+                         targetNode.value(QStringLiteral("nodeId")).toInt(-1));
+        }
+        if (!afterNode.isEmpty()) {
+            issue.insert(QStringLiteral("nodeId"),
+                         afterNode.value(QStringLiteral("nodeId")).toInt(-1));
+            issue.insert(QStringLiteral("affectedNodes"), QJsonArray{ afterNode });
+        }
+        issues.append(issue);
+    }
+
+    QJsonObject report{
+        { QStringLiteral("kind"), kind },
+        { QStringLiteral("targetSelector"), targetSelector },
+        { QStringLiteral("expectedSelector"), expectedSelector },
+        { QStringLiteral("expectation"), QJsonObject{
+            { QStringLiteral("property"), expectation.property },
+            { QStringLiteral("operator"), expectation.op },
+            { QStringLiteral("expected"), expectation.value },
+        } },
+        { QStringLiteral("target"), targetQuery },
+        { QStringLiteral("before"), beforeQuery },
+        { QStringLiteral("input"), inputResult },
+        { QStringLiteral("events"), events },
+        { QStringLiteral("after"), afterQuery },
+        { QStringLiteral("verification"), verification },
+        { QStringLiteral("issues"), issues },
+    };
+    if (!key.isEmpty())
+        report.insert(QStringLiteral("key"), key);
+    return report;
+}
+
+static QJsonObject clickAndWaitWorkflowReport(const QString &targetSelector,
+                                              const QString &waitSelector,
+                                              const QJsonObject &until,
+                                              const QJsonObject &targetQuery,
+                                              const QJsonObject &input,
+                                              const QJsonArray &events,
+                                              const QJsonObject &wait)
+{
+    const QJsonObject inputResult = input.value(QStringLiteral("result")).toObject();
+    const bool delivered = inputResult.value(QStringLiteral("delivered")).toBool();
+    const QJsonObject waitResult = wait.value(QStringLiteral("result")).toObject();
+    const bool waitPassed = waitResult.value(QStringLiteral("ok")).toBool();
+
+    QJsonObject verification{
+        { QStringLiteral("passed"), delivered && waitPassed },
+        { QStringLiteral("waitOk"), waitPassed },
+        { QStringLiteral("timedOut"), waitResult.value(QStringLiteral("timedOut")).toBool() },
+        { QStringLiteral("reason"), waitResult.value(QStringLiteral("reason")).toString() },
+    };
+
+    QJsonArray issues;
+    if (!delivered) {
+        const QJsonArray diagnostics = inputResult.value(QStringLiteral("diagnostics")).toArray();
+        for (const QJsonValue &diagnostic : diagnostics) {
+            QJsonObject issue = diagnostic.toObject();
+            issue.insert(QStringLiteral("phase"), QStringLiteral("input"));
+            issues.append(issue);
+        }
+    }
+    if (delivered && !waitPassed) {
+        QJsonObject issue{
+            { QStringLiteral("id"), QStringLiteral("workflow.wait_not_satisfied") },
+            { QStringLiteral("severity"), QStringLiteral("error") },
+            { QStringLiteral("confidence"), 0.95 },
+            { QStringLiteral("phase"), QStringLiteral("wait") },
+            { QStringLiteral("message"),
+              QStringLiteral("Input was delivered but the expected wait predicate was not satisfied.") },
+            { QStringLiteral("evidence"), QJsonArray{
+                QStringLiteral("input.delivered=true"),
+                QStringLiteral("events=%1").arg(events.size()),
+                QStringLiteral("wait.reason=%1").arg(waitResult.value(QStringLiteral("reason")).toString()),
+            } },
+        };
+        if (waitResult.contains(QStringLiteral("diagnostics")))
+            issue.insert(QStringLiteral("diagnostics"), waitResult.value(QStringLiteral("diagnostics")));
+        issues.append(issue);
+    }
+
+    return {
+        { QStringLiteral("kind"), QStringLiteral("click-and-wait") },
+        { QStringLiteral("targetSelector"), targetSelector },
+        { QStringLiteral("waitSelector"), waitSelector },
+        { QStringLiteral("until"), until },
+        { QStringLiteral("target"), targetQuery },
+        { QStringLiteral("input"), inputResult },
+        { QStringLiteral("events"), events },
+        { QStringLiteral("wait"), waitResult },
+        { QStringLiteral("verification"), verification },
+        { QStringLiteral("issues"), issues },
+    };
+}
+
+class QmlAgentMcpServer : public QObject
+{
+    Q_OBJECT
+
+public:
+    explicit QmlAgentMcpServer(int timeoutMs, QObject *parent = nullptr)
+        : QObject(parent)
+        , m_timeoutMs(timeoutMs)
+    {
+        m_commandTimeout.setSingleShot(true);
+        connect(&m_commandTimeout, &QTimer::timeout,
+                this, &QmlAgentMcpServer::targetCommandTimedOut);
+        const int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+        if (flags < 0) {
+            QTimer::singleShot(0, this, &QmlAgentMcpServer::handleInputClosed);
+        } else {
+            fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
+            m_stdinNotifier = new QSocketNotifier(STDIN_FILENO, QSocketNotifier::Read, this);
+            connect(m_stdinNotifier, &QSocketNotifier::activated,
+                    this, &QmlAgentMcpServer::handleStdinActivated);
+        }
+    }
+
+private:
+    struct PendingCall
+    {
+        enum class Kind {
+            TargetCommand,
+            WorkflowClick,
+            WorkflowClickAndWait,
+            WorkflowKey,
+            Disconnect,
+        };
+
+        Kind kind = Kind::TargetCommand;
+        QJsonValue mcpId;
+        QString targetMethod;
+        QJsonObject targetParams;
+        int targetId = 0;
+        QString targetSelector;
+        QString expectedSelector;
+        QString waitSelector;
+        QJsonObject waitUntil;
+        int waitTimeoutMs = -1;
+        QString key;
+        QString verbosity;
+        Expectation expectation;
+    };
+
+    struct WorkflowState
+    {
+        enum class Phase {
+            TargetQuery,
+            BeforeQuery,
+            Subscribe,
+            Input,
+            Wait,
+            AfterQuery,
+            Unsubscribe,
+        };
+
+        PendingCall call;
+        Phase phase = Phase::TargetQuery;
+        int targetId = 0;
+        QString targetMethod;
+        bool subscribedBefore = false;
+        bool temporarySubscriptionActive = false;
+        bool finishingWithError = false;
+        QJsonObject errorPayload;
+        QJsonObject targetQuery;
+        QJsonObject beforeQuery;
+        QJsonObject input;
+        QJsonObject wait;
+        QJsonObject afterQuery;
+        QJsonArray events;
+    };
+
+    static QJsonObject nodeRef(const QJsonObject &arguments, QString *error)
+    {
+        const bool hasSelector = arguments.contains(QStringLiteral("selector"))
+                && !arguments.value(QStringLiteral("selector")).toString().isEmpty();
+        const bool hasNodeId = arguments.contains(QStringLiteral("nodeId"))
+                && !arguments.value(QStringLiteral("nodeId")).isNull();
+        if (hasSelector == hasNodeId) {
+            *error = QStringLiteral("Provide exactly one of selector or nodeId.");
+            return {};
+        }
+        if (hasSelector)
+            return { { QStringLiteral("selector"), arguments.value(QStringLiteral("selector")) } };
+        return { { QStringLiteral("nodeId"), arguments.value(QStringLiteral("nodeId")).toInt() } };
+    }
+
+    static QJsonObject treeParams(const QJsonObject &arguments)
+    {
+        const bool selectorWithoutDepth = arguments.contains(QStringLiteral("selector"))
+                && !arguments.contains(QStringLiteral("depth"));
+        QJsonObject params{
+            { QStringLiteral("depth"), selectorWithoutDepth
+                    ? -1
+                    : arguments.value(QStringLiteral("depth")).toInt(3) },
+            { QStringLiteral("includeSource"), arguments.value(QStringLiteral("includeSource")).toBool(false) },
+            { QStringLiteral("fields"), arguments.value(QStringLiteral("fields")).toArray(QJsonArray{
+                QStringLiteral("nodeId"),
+                QStringLiteral("qmlId"),
+                QStringLiteral("objectName"),
+                QStringLiteral("type"),
+                QStringLiteral("text"),
+                QStringLiteral("bbox"),
+                QStringLiteral("insideViewport"),
+                QStringLiteral("actionable"),
+            }) },
+            { QStringLiteral("maxNodes"), arguments.value(QStringLiteral("maxNodes")).toInt(500) },
+            { QStringLiteral("collapseRepeated"), arguments.value(QStringLiteral("collapseRepeated")).toBool(true) },
+        };
+        for (const QString &key : { QStringLiteral("includeInvisible"),
+                                    QStringLiteral("properties"),
+                                    QStringLiteral("selector") }) {
+            if (arguments.contains(key))
+                params.insert(key, arguments.value(key));
+        }
+        return params;
+    }
+
+    static QJsonObject queryParams(const QJsonObject &arguments)
+    {
+        QJsonObject params{
+            { QStringLiteral("selector"), arguments.value(QStringLiteral("selector")) },
+            { QStringLiteral("includeSource"), arguments.value(QStringLiteral("includeSource")).toBool(true) },
+            { QStringLiteral("fields"), arguments.value(QStringLiteral("fields")).toArray(QJsonArray{
+                QStringLiteral("nodeId"),
+                QStringLiteral("qmlId"),
+                QStringLiteral("objectName"),
+                QStringLiteral("type"),
+                QStringLiteral("text"),
+                QStringLiteral("bbox"),
+                QStringLiteral("insideViewport"),
+                QStringLiteral("actionable"),
+                QStringLiteral("sourceLocation"),
+            }) },
+            { QStringLiteral("maxNodes"), arguments.value(QStringLiteral("maxNodes")).toInt(20) },
+        };
+        if (arguments.contains(QStringLiteral("properties")))
+            params.insert(QStringLiteral("properties"), arguments.value(QStringLiteral("properties")));
+        return params;
+    }
+
+    static bool requireStringArgument(const QJsonObject &arguments, const QString &name,
+                                      QString *value, QString *error)
+    {
+        *value = arguments.value(name).toString();
+        if (value->isEmpty()) {
+            *error = QStringLiteral("Provide %1.").arg(name);
+            return false;
+        }
+        return true;
+    }
+
+    static bool mapWorkflowCall(const QString &name, const QJsonObject &arguments,
+                                PendingCall *call, QString *error)
+    {
+        if (name != QLatin1String("qmlagent.workflow_click")
+                && name != QLatin1String("qmlagent.workflow_click_and_wait")
+                && name != QLatin1String("qmlagent.workflow_key")) {
+            return false;
+        }
+
+        if (name == QLatin1String("qmlagent.workflow_click"))
+            call->kind = PendingCall::Kind::WorkflowClick;
+        else if (name == QLatin1String("qmlagent.workflow_click_and_wait"))
+            call->kind = PendingCall::Kind::WorkflowClickAndWait;
+        else
+            call->kind = PendingCall::Kind::WorkflowKey;
+        if (!requireStringArgument(arguments, QStringLiteral("selector"),
+                                   &call->targetSelector, error)) {
+            return true;
+        }
+        if (call->kind == PendingCall::Kind::WorkflowClickAndWait) {
+            if (!requireStringArgument(arguments, QStringLiteral("waitSelector"),
+                                       &call->waitSelector, error)) {
+                return true;
+            }
+            call->waitUntil = arguments.value(QStringLiteral("until")).toObject();
+            if (call->waitUntil.isEmpty()) {
+                *error = QStringLiteral("Provide until.");
+                return true;
+            }
+            if (arguments.contains(QStringLiteral("timeoutMs")))
+                call->waitTimeoutMs = arguments.value(QStringLiteral("timeoutMs")).toInt(-1);
+            call->verbosity = arguments.value(QStringLiteral("verbosity")).toString(QStringLiteral("summary"));
+            return true;
+        }
+        if (call->kind == PendingCall::Kind::WorkflowKey
+                && !requireStringArgument(arguments, QStringLiteral("key"),
+                                          &call->key, error)) {
+            return true;
+        }
+        if (!requireStringArgument(arguments, QStringLiteral("expectSelector"),
+                                   &call->expectedSelector, error)) {
+            return true;
+        }
+
+        QString expectationText;
+        if (!requireStringArgument(arguments, QStringLiteral("expect"), &expectationText, error))
+            return true;
+
+        call->expectation = parseExpectation(expectationText);
+        call->verbosity = arguments.value(QStringLiteral("verbosity")).toString(QStringLiteral("summary"));
+        if (!call->expectation.valid)
+            *error = QStringLiteral("Provide expect as property=value or a numeric comparison.");
+        return true;
+    }
+
+    static bool mapToolCall(const QString &name, const QJsonObject &arguments,
+                            QString *targetMethod, QJsonObject *targetParams,
+                            QString *error)
+    {
+        if (name == QLatin1String("qmlagent.ui_get_tree")) {
+            *targetMethod = QStringLiteral("UI.getTree");
+            *targetParams = treeParams(arguments);
+            return true;
+        }
+        if (name == QLatin1String("qmlagent.ui_query")) {
+            *targetMethod = QStringLiteral("UI.query");
+            *targetParams = queryParams(arguments);
+            return true;
+        }
+        if (name == QLatin1String("qmlagent.ui_wait_for")) {
+            *targetMethod = QStringLiteral("UI.waitFor");
+            QString selector;
+            if (!requireStringArgument(arguments, QStringLiteral("selector"), &selector, error))
+                return false;
+            const QJsonObject until = arguments.value(QStringLiteral("until")).toObject();
+            if (until.isEmpty()) {
+                *error = QStringLiteral("Provide until.");
+                return false;
+            }
+            *targetParams = {
+                { QStringLiteral("selector"), selector },
+                { QStringLiteral("until"), until },
+            };
+            if (arguments.contains(QStringLiteral("timeoutMs")))
+                targetParams->insert(QStringLiteral("timeoutMs"),
+                                     arguments.value(QStringLiteral("timeoutMs")).toInt());
+            return true;
+        }
+        if (name == QLatin1String("qmlagent.ui_subscribe")) {
+            *targetMethod = QStringLiteral("UI.subscribe");
+            *targetParams = {};
+            return true;
+        }
+        if (name == QLatin1String("qmlagent.ui_unsubscribe")) {
+            *targetMethod = QStringLiteral("UI.unsubscribe");
+            *targetParams = {};
+            return true;
+        }
+        if (name == QLatin1String("qmlagent.diagnostics_analyze_tree")) {
+            *targetMethod = QStringLiteral("Diagnostics.analyzeTree");
+            if (arguments.contains(QStringLiteral("includeInvisible")))
+                targetParams->insert(QStringLiteral("includeInvisible"),
+                                     arguments.value(QStringLiteral("includeInvisible")).toBool());
+            if (arguments.contains(QStringLiteral("includeFrameworkIssues")))
+                targetParams->insert(QStringLiteral("includeFrameworkIssues"),
+                                     arguments.value(QStringLiteral("includeFrameworkIssues")).toBool());
+            if (arguments.contains(QStringLiteral("issueScope")))
+                targetParams->insert(QStringLiteral("issueScope"), arguments.value(QStringLiteral("issueScope")));
+            return true;
+        }
+        if (name == QLatin1String("qmlagent.diagnostics_analyze_node")) {
+            *targetMethod = QStringLiteral("Diagnostics.analyzeNode");
+            *targetParams = nodeRef(arguments, error);
+            if (!error->isEmpty())
+                return false;
+            if (arguments.contains(QStringLiteral("checks")))
+                targetParams->insert(QStringLiteral("checks"), arguments.value(QStringLiteral("checks")));
+            return true;
+        }
+        if (name == QLatin1String("qmlagent.diagnostics_analyze_binding")) {
+            *targetMethod = QStringLiteral("Diagnostics.analyzeBinding");
+            *targetParams = nodeRef(arguments, error);
+            if (!error->isEmpty())
+                return false;
+            QString property;
+            if (!requireStringArgument(arguments, QStringLiteral("property"), &property, error))
+                return false;
+            targetParams->insert(QStringLiteral("property"), property);
+            return true;
+        }
+        if (name == QLatin1String("qmlagent.runtime_enable_mutation")) {
+            *targetMethod = QStringLiteral("Session.configure");
+            *targetParams = {
+                { QStringLiteral("runtimeMutation"),
+                  arguments.value(QStringLiteral("enabled")).toBool(true) },
+            };
+            return true;
+        }
+        if (name == QLatin1String("qmlagent.input_click")) {
+            *targetMethod = QStringLiteral("Input.clickNode");
+            *targetParams = nodeRef(arguments, error);
+            return error->isEmpty();
+        }
+        if (name == QLatin1String("qmlagent.input_wheel")) {
+            *targetMethod = QStringLiteral("Input.wheel");
+            *targetParams = nodeRef(arguments, error);
+            if (!error->isEmpty())
+                return false;
+            for (const QString &key : { QStringLiteral("deltaX"),
+                                        QStringLiteral("deltaY"),
+                                        QStringLiteral("angleDelta"),
+                                        QStringLiteral("pixelDelta"),
+                                        QStringLiteral("modifiers") }) {
+                if (arguments.contains(key))
+                    targetParams->insert(key, arguments.value(key));
+            }
+            return true;
+        }
+        if (name == QLatin1String("qmlagent.input_focus")) {
+            *targetMethod = QStringLiteral("Input.focusNode");
+            *targetParams = nodeRef(arguments, error);
+            return error->isEmpty();
+        }
+        if (name == QLatin1String("qmlagent.input_mouse")) {
+            *targetMethod = QStringLiteral("Input.dispatchMouseEvent");
+            *targetParams = nodeRef(arguments, error);
+            if (!error->isEmpty())
+                return false;
+            for (const QString &key : { QStringLiteral("type"),
+                                        QStringLiteral("button"),
+                                        QStringLiteral("buttons"),
+                                        QStringLiteral("point"),
+                                        QStringLiteral("modifiers") }) {
+                if (arguments.contains(key))
+                    targetParams->insert(key, arguments.value(key));
+            }
+            return true;
+        }
+        if (name == QLatin1String("qmlagent.input_drag")) {
+            *targetMethod = QStringLiteral("Input.dragNode");
+            *targetParams = nodeRef(arguments, error);
+            if (!error->isEmpty())
+                return false;
+            for (const QString &key : { QStringLiteral("from"),
+                                        QStringLiteral("to"),
+                                        QStringLiteral("delta"),
+                                        QStringLiteral("steps"),
+                                        QStringLiteral("button"),
+                                        QStringLiteral("modifiers") }) {
+                if (arguments.contains(key))
+                    targetParams->insert(key, arguments.value(key));
+            }
+            return true;
+        }
+        if (name == QLatin1String("qmlagent.input_touch")) {
+            *targetMethod = QStringLiteral("Input.dispatchTouchEvent");
+            *targetParams = nodeRef(arguments, error);
+            if (!error->isEmpty())
+                return false;
+            for (const QString &key : { QStringLiteral("type"),
+                                        QStringLiteral("points"),
+                                        QStringLiteral("modifiers") }) {
+                if (arguments.contains(key))
+                    targetParams->insert(key, arguments.value(key));
+            }
+            return true;
+        }
+        if (name == QLatin1String("qmlagent.input_key")) {
+            *targetMethod = QStringLiteral("Input.dispatchKeyEvent");
+            const bool hasSelector = arguments.contains(QStringLiteral("selector"))
+                    && !arguments.value(QStringLiteral("selector")).toString().isEmpty();
+            const bool hasNodeId = arguments.contains(QStringLiteral("nodeId"))
+                    && !arguments.value(QStringLiteral("nodeId")).isNull();
+            if (hasSelector || hasNodeId) {
+                *targetParams = nodeRef(arguments, error);
+                if (!error->isEmpty())
+                    return false;
+            }
+            for (const QString &key : { QStringLiteral("key"),
+                                        QStringLiteral("keyCode"),
+                                        QStringLiteral("text"),
+                                        QStringLiteral("type"),
+                                        QStringLiteral("modifiers") }) {
+                if (arguments.contains(key))
+                    targetParams->insert(key, arguments.value(key));
+            }
+            if (!targetParams->contains(QStringLiteral("key"))
+                    && !targetParams->contains(QStringLiteral("keyCode"))) {
+                *error = QStringLiteral("Provide key or keyCode.");
+                return false;
+            }
+            return true;
+        }
+        if (name == QLatin1String("qmlagent.input_type_text")) {
+            *targetMethod = QStringLiteral("Input.typeText");
+            *targetParams = { { QStringLiteral("text"), arguments.value(QStringLiteral("text")) } };
+            const bool hasSelector = arguments.contains(QStringLiteral("selector"))
+                    && !arguments.value(QStringLiteral("selector")).toString().isEmpty();
+            const bool hasNodeId = arguments.contains(QStringLiteral("nodeId"))
+                    && !arguments.value(QStringLiteral("nodeId")).isNull();
+            if (hasSelector || hasNodeId) {
+                const QJsonObject ref = nodeRef(arguments, error);
+                if (!error->isEmpty())
+                    return false;
+                for (auto it = ref.constBegin(), end = ref.constEnd(); it != end; ++it)
+                    targetParams->insert(it.key(), it.value());
+            }
+            return true;
+        }
+        if (name == QLatin1String("qmlagent.input_replace_text")) {
+            *targetMethod = QStringLiteral("Input.typeText");
+            const bool clear = arguments.value(QStringLiteral("clear")).toBool(false);
+            if (!clear && !arguments.contains(QStringLiteral("text"))) {
+                *error = QStringLiteral("Provide text or clear=true.");
+                return false;
+            }
+            *targetParams = {
+                { QStringLiteral("text"), clear ? QJsonValue(QString()) : arguments.value(QStringLiteral("text")) },
+                { QStringLiteral("replaceExisting"), true },
+            };
+            const QJsonObject ref = nodeRef(arguments, error);
+            if (!error->isEmpty())
+                return false;
+            for (auto it = ref.constBegin(), end = ref.constEnd(); it != end; ++it)
+                targetParams->insert(it.key(), it.value());
+            return true;
+        }
+        if (name == QLatin1String("qmlagent.runtime_set_property")) {
+            *targetMethod = QStringLiteral("Runtime.setProperty");
+            *targetParams = nodeRef(arguments, error);
+            if (!error->isEmpty())
+                return false;
+            QString property;
+            if (!requireStringArgument(arguments, QStringLiteral("property"), &property, error))
+                return false;
+            if (!arguments.contains(QStringLiteral("value"))) {
+                *error = QStringLiteral("Provide value.");
+                return false;
+            }
+            targetParams->insert(QStringLiteral("property"), property);
+            targetParams->insert(QStringLiteral("value"), arguments.value(QStringLiteral("value")));
+            if (arguments.contains(QStringLiteral("settle")))
+                targetParams->insert(QStringLiteral("settle"), arguments.value(QStringLiteral("settle")));
+            return true;
+        }
+        if (name == QLatin1String("qmlagent.runtime_invoke_method")) {
+            *targetMethod = QStringLiteral("Runtime.invokeMethod");
+            *targetParams = nodeRef(arguments, error);
+            if (!error->isEmpty())
+                return false;
+            QString method;
+            if (!requireStringArgument(arguments, QStringLiteral("method"), &method, error))
+                return false;
+            targetParams->insert(QStringLiteral("method"), method);
+            targetParams->insert(QStringLiteral("args"),
+                                 arguments.value(QStringLiteral("args")).toArray());
+            if (arguments.contains(QStringLiteral("settle")))
+                targetParams->insert(QStringLiteral("settle"), arguments.value(QStringLiteral("settle")));
+            return true;
+        }
+        if (name == QLatin1String("qmlagent.log_enable")) {
+            *targetMethod = QStringLiteral("Log.enable");
+            if (arguments.contains(QStringLiteral("replayBuffered")))
+                targetParams->insert(QStringLiteral("replayBuffered"),
+                                     arguments.value(QStringLiteral("replayBuffered")).toBool());
+            return true;
+        }
+        if (name == QLatin1String("qmlagent.log_get_entries")) {
+            *targetMethod = QStringLiteral("Log.getEntries");
+            if (arguments.contains(QStringLiteral("level")))
+                targetParams->insert(QStringLiteral("level"), arguments.value(QStringLiteral("level")));
+            if (arguments.contains(QStringLiteral("sinceTimestamp")))
+                targetParams->insert(QStringLiteral("sinceTimestamp"),
+                                     arguments.value(QStringLiteral("sinceTimestamp")));
+            if (arguments.contains(QStringLiteral("maxEntries")))
+                targetParams->insert(QStringLiteral("maxEntries"),
+                                     arguments.value(QStringLiteral("maxEntries")));
+            return true;
+        }
+        if (name == QLatin1String("qmlagent.render_capture_screenshot")) {
+            *targetMethod = QStringLiteral("Render.captureScreenshot");
+            if (arguments.contains(QStringLiteral("windowId")))
+                targetParams->insert(QStringLiteral("windowId"),
+                                     arguments.value(QStringLiteral("windowId")).toInt());
+            if (arguments.contains(QStringLiteral("scale")))
+                targetParams->insert(QStringLiteral("scale"), arguments.value(QStringLiteral("scale")));
+            if (arguments.contains(QStringLiteral("region")))
+                targetParams->insert(QStringLiteral("region"), arguments.value(QStringLiteral("region")));
+            const bool includeData = arguments.value(QStringLiteral("includeData")).toBool(false);
+            targetParams->insert(QStringLiteral("omitData"), !includeData);
+            return true;
+        }
+        if (name == QLatin1String("qmlagent.source_resolve")) {
+            *targetMethod = QStringLiteral("Source.resolveNode");
+            *targetParams = nodeRef(arguments, error);
+            return error->isEmpty();
+        }
+
+        *error = QStringLiteral("Unknown tool: %1").arg(name);
+        return false;
+    }
+
+    static bool makePendingCall(const QJsonValue &requestId, const QString &name,
+                                const QJsonObject &arguments, PendingCall *call,
+                                QString *error)
+    {
+        call->mcpId = requestId;
+        call->verbosity = arguments.value(QStringLiteral("verbosity")).toString(QStringLiteral("full"));
+        if (mapWorkflowCall(name, arguments, call, error))
+            return error->isEmpty();
+
+        call->kind = PendingCall::Kind::TargetCommand;
+        return mapToolCall(name, arguments, &call->targetMethod, &call->targetParams, error);
+    }
+
+    static QString workflowPhaseName(WorkflowState::Phase phase)
+    {
+        switch (phase) {
+        case WorkflowState::Phase::TargetQuery:
+            return QStringLiteral("target-query");
+        case WorkflowState::Phase::BeforeQuery:
+            return QStringLiteral("before-query");
+        case WorkflowState::Phase::Subscribe:
+            return QStringLiteral("subscribe");
+        case WorkflowState::Phase::Input:
+            return QStringLiteral("input");
+        case WorkflowState::Phase::Wait:
+            return QStringLiteral("wait");
+        case WorkflowState::Phase::AfterQuery:
+            return QStringLiteral("after-query");
+        case WorkflowState::Phase::Unsubscribe:
+            return QStringLiteral("unsubscribe");
+        }
+        return QStringLiteral("unknown");
+    }
+
+    void writeMessage(const QJsonObject &message)
+    {
+        QTextStream stream(stdout);
+        stream << QString::fromUtf8(QJsonDocument(message).toJson(QJsonDocument::Compact))
+               << Qt::endl;
+        stream.flush();
+    }
+
+    void handleInputLine(const QByteArray &lineBytes)
+    {
+        const QByteArray line = lineBytes.trimmed();
+        if (line.isEmpty())
+            return;
+
+        QJsonParseError parseError;
+        const QJsonDocument document = QJsonDocument::fromJson(line, &parseError);
+        if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+            writeMessage(jsonError({}, -32700, QStringLiteral("Parse error"),
+                                   parseError.errorString()));
+            return;
+        }
+        handleMcpRequest(document.object());
+    }
+
+    void handleMcpRequest(const QJsonObject &request)
+    {
+        const QJsonValue requestId = request.value(QStringLiteral("id"));
+        const QString method = request.value(QStringLiteral("method")).toString();
+
+        if (method == QLatin1String("initialize")) {
+            writeMessage(jsonResponse(requestId, QJsonObject{
+                { QStringLiteral("protocolVersion"), QStringLiteral("2024-11-05") },
+                { QStringLiteral("capabilities"), QJsonObject{ { QStringLiteral("tools"), QJsonObject{} } } },
+                { QStringLiteral("serverInfo"), QJsonObject{
+                    { QStringLiteral("name"), QStringLiteral("qmlagent") },
+                    { QStringLiteral("version"), QStringLiteral("0.1") },
+                } },
+            }));
+            return;
+        }
+        if (method == QLatin1String("shutdown")) {
+            writeMessage(jsonResponse(requestId, QJsonValue::Null));
+            quitIfInputClosedAndIdle();
+            return;
+        }
+        if (method == QLatin1String("notifications/initialized"))
+            return;
+        if (method == QLatin1String("notifications/exit")) {
+            QCoreApplication::quit();
+            return;
+        }
+        if (method == QLatin1String("tools/list")) {
+            writeMessage(jsonResponse(requestId, QJsonObject{ { QStringLiteral("tools"), toolList() } }));
+            return;
+        }
+        if (method == QLatin1String("tools/call")) {
+            const QJsonObject params = request.value(QStringLiteral("params")).toObject();
+            const QString name = params.value(QStringLiteral("name")).toString();
+            const QJsonObject arguments = params.value(QStringLiteral("arguments")).toObject();
+
+            if (handleMcpControlTool(requestId, name, arguments))
+                return;
+
+            PendingCall call;
+            QString error;
+            if (!makePendingCall(requestId, name, arguments, &call, &error)) {
+                writeMessage(jsonResponse(requestId, toolErrorResult(error)));
+                return;
+            }
+
+            if (!isTargetConnected()) {
+                routePendingCallViaLauncher(requestId, call);
+                return;
+            }
+
+            m_queue.enqueue(call);
+            dispatchNextTargetCommand();
+            return;
+        }
+
+        if (!requestId.isUndefined())
+            writeMessage(jsonError(requestId, -32601,
+                                   QStringLiteral("Method not found: %1").arg(method)));
+    }
+
+    bool handleMcpControlTool(const QJsonValue &requestId, const QString &name,
+                              const QJsonObject &arguments)
+    {
+        if (name == QLatin1String("qmlagent.target_status")) {
+            writeMessage(jsonResponse(requestId, toolResult(targetStatus())));
+            return true;
+        }
+
+        if (name == QLatin1String("qmlagent.launcher_status")) {
+            const QList<LauncherSession> sessions = discoverLauncherSessions(m_timeoutMs);
+            const QJsonArray recentExits = recentLauncherExitReports();
+            writeMessage(jsonResponse(requestId, toolResult(QJsonObject{
+                { QStringLiteral("ok"), true },
+                { QStringLiteral("sessionCount"), sessions.size() },
+                { QStringLiteral("sessions"), launcherSessionSummaries(sessions) },
+                { QStringLiteral("recentExitCount"), recentExits.size() },
+                { QStringLiteral("recentExits"), recentExits },
+                { QStringLiteral("workflows"), QJsonObject{
+                    { QStringLiteral("preview"), QStringLiteral("qmlagent-launcher preview <Main.qml> enables qmlagent.preview_reload") },
+                    { QStringLiteral("application"), QStringLiteral("qmlagent-launcher app <executable> does not support preview reload") },
+                } },
+            })));
+            return true;
+        }
+
+        if (name == QLatin1String("qmlagent.preview_reload")) {
+            LauncherSession launcher;
+            QString launcherError;
+            if (!resolveLauncherSession(arguments.value(QStringLiteral("timeoutMs")).toInt(m_timeoutMs),
+                                        &launcher, &launcherError)) {
+                writeMessage(jsonResponse(requestId, toolErrorResult(launcherError)));
+                return true;
+            }
+            QString controlError;
+            const QJsonObject response = sendLauncherControlRequest(
+                    launcher.metadata,
+                    arguments.value(QStringLiteral("timeoutMs")).toInt(m_timeoutMs),
+                    QStringLiteral("Preview.reload"),
+                    {
+                        { QStringLiteral("timeoutMs"), arguments.value(QStringLiteral("timeoutMs")).toInt(m_timeoutMs) },
+                    },
+                    &controlError);
+            if (!controlError.isEmpty()) {
+                writeMessage(jsonResponse(requestId, toolErrorResult(controlError)));
+                return true;
+            }
+            const QJsonObject result = response.value(QStringLiteral("result")).toObject();
+            writeMessage(jsonResponse(requestId, toolResult(result,
+                                                            !result.value(QStringLiteral("error")).toObject().isEmpty())));
+            return true;
+        }
+
+        if (name == QLatin1String("qmlagent.launcher_stop")) {
+            LauncherSession launcher;
+            QString launcherError;
+            QJsonObject fallbackResult;
+            if (!resolveLauncherSessionForStop(m_timeoutMs, &launcher, &fallbackResult,
+                                               &launcherError)) {
+                if (!fallbackResult.isEmpty()) {
+                    writeMessage(jsonResponse(requestId, toolResult(fallbackResult,
+                            !fallbackResult.value(QStringLiteral("ok")).toBool(false))));
+                    return true;
+                }
+                writeMessage(jsonResponse(requestId, toolErrorResult(launcherError)));
+                return true;
+            }
+            QString controlError;
+            const QJsonObject response = sendLauncherControlRequest(
+                    launcher.metadata, m_timeoutMs, QStringLiteral("Session.stop"), {},
+                    &controlError);
+            if (!controlError.isEmpty()) {
+                writeMessage(jsonResponse(requestId, toolErrorResult(controlError)));
+                return true;
+            }
+            writeMessage(jsonResponse(requestId, toolResult(response.value(QStringLiteral("result")).toObject())));
+            return true;
+        }
+
+        if (name == QLatin1String("qmlagent.disconnect")) {
+            if (m_currentCall.has_value() || m_workflow.has_value() || !m_queue.isEmpty()) {
+                PendingCall call;
+                call.kind = PendingCall::Kind::Disconnect;
+                call.mcpId = requestId;
+                m_queue.enqueue(call);
+                dispatchNextTargetCommand();
+                return true;
+            }
+            disconnectTarget(QStringLiteral("client-request"));
+            writeMessage(jsonResponse(requestId, toolResult(targetStatus())));
+            return true;
+        }
+
+        if (name != QLatin1String("qmlagent.connect_tcp")
+                && name != QLatin1String("qmlagent.connect_local_socket")) {
+            return false;
+        }
+
+        if (m_currentCall.has_value() || m_workflow.has_value() || !m_queue.isEmpty()) {
+            writeMessage(jsonResponse(requestId, toolErrorResult(
+                    QStringLiteral("Cannot connect while target commands are in flight."))));
+            return true;
+        }
+
+        if (name == QLatin1String("qmlagent.connect_local_socket")) {
+            const QString path = arguments.value(QStringLiteral("path")).toString();
+            if (path.isEmpty()) {
+                writeMessage(jsonResponse(requestId, toolErrorResult(
+                        QStringLiteral("Provide path."))));
+                return true;
+            }
+
+            const int timeoutMs = arguments.contains(QStringLiteral("timeoutMs"))
+                    ? arguments.value(QStringLiteral("timeoutMs")).toInt(-1)
+                    : m_timeoutMs;
+            if (timeoutMs <= 0) {
+                writeMessage(jsonResponse(requestId, toolErrorResult(
+                        QStringLiteral("Provide timeoutMs as a positive integer."))));
+                return true;
+            }
+
+            const QJsonObject result = connectLocalSocketTarget(path, timeoutMs);
+            writeMessage(jsonResponse(requestId, toolResult(result,
+                                                            !result.value(QStringLiteral("connected"))
+                                                                     .toBool())));
+            return true;
+        }
+
+        const int port = arguments.contains(QStringLiteral("port"))
+                ? arguments.value(QStringLiteral("port")).toInt(-1)
+                : DefaultMcpTargetPort;
+        if (port <= 0 || port > 65535) {
+            writeMessage(jsonResponse(requestId, toolErrorResult(
+                    QStringLiteral("Provide port as an integer between 1 and 65535."))));
+            return true;
+        }
+
+        const int timeoutMs = arguments.contains(QStringLiteral("timeoutMs"))
+                ? arguments.value(QStringLiteral("timeoutMs")).toInt(-1)
+                : m_timeoutMs;
+        if (timeoutMs <= 0) {
+            writeMessage(jsonResponse(requestId, toolErrorResult(
+                    QStringLiteral("Provide timeoutMs as a positive integer."))));
+            return true;
+        }
+
+        const QString host = arguments.value(QStringLiteral("host")).toString(
+                QStringLiteral("127.0.0.1"));
+        if (host.isEmpty()) {
+            writeMessage(jsonResponse(requestId, toolErrorResult(QStringLiteral("Provide host."))));
+            return true;
+        }
+
+        const QJsonObject result = connectTcpTarget(host, quint16(port), timeoutMs);
+        writeMessage(jsonResponse(requestId, toolResult(result,
+                                                        !result.value(QStringLiteral("connected"))
+                                                                 .toBool())));
+        return true;
+    }
+
+    bool isTargetConnected() const
+    {
+        return m_connection && m_connection->isConnected() && m_client
+                && m_client->state() == QQmlDebugClient::Enabled;
+    }
+
+    QString notConnectedMessage() const
+    {
+        return QStringLiteral("QmlAgent target is not connected and no single live "
+                              "qmlagent-launcher gateway was available. Start one launcher session "
+                              "with qmlagent-launcher preview <Main.qml> or qmlagent-launcher app "
+                              "<executable> [-- args...], then call qmlagent.ui_query or other "
+                              "target-backed tools directly. For manually launched targets, attach "
+                              "this MCP server with qmlagent.connect_tcp or qmlagent.connect_local_socket.");
+    }
+
+    QJsonObject agentToolGuide() const
+    {
+        return {
+            { QStringLiteral("inspect"), QStringLiteral("qmlagent.ui_query") },
+            { QStringLiteral("tree"), QStringLiteral("qmlagent.ui_get_tree") },
+            { QStringLiteral("click"), QStringLiteral("qmlagent.input_click") },
+            { QStringLiteral("dragSliderHandleSwipe"),
+              QStringLiteral("qmlagent.input_drag") },
+            { QStringLiteral("scrollFlickableListViewGridViewTableViewTreeView"),
+              QStringLiteral("qmlagent.input_wheel") },
+            { QStringLiteral("waitForSelectorOrProperty"),
+              QStringLiteral("qmlagent.ui_wait_for") },
+            { QStringLiteral("clickAndWaitForDrawerMenuPopupDialogLoaderTransition"),
+              QStringLiteral("qmlagent.workflow_click_and_wait") },
+            { QStringLiteral("immediateClickVerification"),
+              QStringLiteral("qmlagent.workflow_click") },
+            { QStringLiteral("keyboardWorkflow"), QStringLiteral("qmlagent.workflow_key") },
+            { QStringLiteral("computedBindingProvenance"),
+              QStringLiteral("qmlagent.diagnostics_analyze_binding") },
+            { QStringLiteral("visualEvidencePolicy"),
+              QStringLiteral("Use structural tools first: ui_query/ui_get_tree, diagnostics, source, logs, input/workflow verification. qmlagent.render_capture_screenshot and qmlagentctl screenshot are fallback evidence after structured evidence is insufficient or the task is explicitly visual. Use scale/region or qmlagentctl --out to keep image bytes out of agent context.") },
+            { QStringLiteral("toolSearchHints"), QJsonArray{
+                QStringLiteral("qmlagent.workflow_click_and_wait Drawer Popup Dialog ComboBox QQuickPopupItem transition wait"),
+                QStringLiteral("qmlagent.ui_wait_for wait until selector found property visible"),
+                QStringLiteral("qmlagent.ui_query popup contents ItemDelegate MenuItem visible choices"),
+                QStringLiteral("qmlagent.input_drag Slider RangeSlider Dial handle drag"),
+                QStringLiteral("qmlagent.input_wheel Flickable ListView GridView TableView TreeView scroll"),
+                QStringLiteral("qmlagent.input_focus TextField TextArea before type text"),
+                QStringLiteral("qmlagent.render_capture_screenshot fallback visual evidence only structured first"),
+            } },
+            { QStringLiteral("fallbacks"), QJsonObject{
+                { QStringLiteral("workflow_click_and_wait_missing"),
+                  QStringLiteral("Use qmlagent.input_click followed by qmlagent.ui_wait_for.") },
+                { QStringLiteral("visualEvidenceNeeded"),
+                  QStringLiteral("Use qmlagent.render_capture_screenshot only after structured runtime evidence is insufficient; default output omits PNG data. If includeData:true is necessary, pass scale and/or region.") },
+            } },
+        };
+    }
+
+    QJsonObject targetStatus() const
+    {
+        QJsonObject status{
+            { QStringLiteral("connected"), isTargetConnected() },
+            { QStringLiteral("uiSubscribed"), m_uiSubscribed },
+            { QStringLiteral("debugConnectionPolicy"), QJsonObject{
+                { QStringLiteral("singleClientPerTarget"), true },
+                { QStringLiteral("guidance"),
+                  QStringLiteral("Use one qmlagent-mcp gateway per target process. If another agent or CLI client is attached, disconnect it or relaunch the target before attaching this MCP server.") },
+            } },
+        };
+        if (!m_host.isEmpty())
+            status.insert(QStringLiteral("host"), m_host);
+        if (m_port > 0)
+            status.insert(QStringLiteral("port"), int(m_port));
+        if (!m_socketPath.isEmpty())
+            status.insert(QStringLiteral("localSocket"), m_socketPath);
+        if (!m_disconnectReason.isEmpty())
+            status.insert(QStringLiteral("lastDisconnectReason"), m_disconnectReason);
+        if (!m_lastError.isEmpty())
+            status.insert(QStringLiteral("lastError"), m_lastError);
+        status.insert(QStringLiteral("agentToolGuide"), agentToolGuide());
+        const QList<LauncherSession> launcherSessions = discoverLauncherSessions(qMin(m_timeoutMs, 1000));
+        const QJsonArray recentLauncherExits = recentLauncherExitReports();
+        int reachableLauncherCount = 0;
+        QJsonObject singleLauncher;
+        for (const LauncherSession &session : launcherSessions) {
+            if (session.status.value(QStringLiteral("controlReachable")).toBool(true)) {
+                ++reachableLauncherCount;
+                singleLauncher = launcherSessionSummaries({ session }).first().toObject();
+            }
+        }
+        status.insert(QStringLiteral("launcherGateway"), QJsonObject{
+            { QStringLiteral("available"), reachableLauncherCount == 1 },
+            { QStringLiteral("reachableSessionCount"), reachableLauncherCount },
+            { QStringLiteral("routing"),
+              reachableLauncherCount == 1
+                      ? QStringLiteral("Target-backed MCP tools route through qmlagent-launcher automatically when no direct attach is active.")
+                      : QStringLiteral("Start exactly one qmlagent-launcher session for automatic gateway routing.") },
+            { QStringLiteral("session"), reachableLauncherCount == 1 ? QJsonValue(singleLauncher) : QJsonValue() },
+        });
+        if (!recentLauncherExits.isEmpty()) {
+            status.insert(QStringLiteral("recentLauncherExitCount"), recentLauncherExits.size());
+            status.insert(QStringLiteral("recentLauncherExits"), recentLauncherExits);
+        }
+        if (!isTargetConnected()) {
+            status.insert(QStringLiteral("nextStep"), reachableLauncherCount == 1
+                    ? QStringLiteral("A single qmlagent-launcher gateway is available. Call target-backed request/response tools such as qmlagent.ui_query, qmlagent.ui_wait_for, qmlagent.input_click, qmlagent.input_drag, qmlagent.input_wheel, qmlagent.preview_reload, or workflow tools directly. Use qmlagent.connect_tcp/connect_local_socket only for manually launched targets or streamed subscriptions.")
+                    : notConnectedMessage());
+        }
+        status.insert(QStringLiteral("attachTools"), QJsonObject{
+            { QStringLiteral("rawMcp"), QJsonArray{
+                QStringLiteral("qmlagent.connect_tcp"),
+                QStringLiteral("qmlagent.connect_local_socket"),
+            } },
+            { QStringLiteral("native"), QJsonArray{
+                QStringLiteral("qmlagent_connect_tcp"),
+                QStringLiteral("qmlagent_connect_local_socket"),
+            } },
+            { QStringLiteral("toolSearchHints"), QJsonArray{
+                QStringLiteral("qmlagent.connect_tcp attach target"),
+                QStringLiteral("qmlagent.connect_local_socket attach target"),
+            } },
+        });
+        if (!m_recentLogEntries.isEmpty()) {
+            status.insert(QStringLiteral("recentLogEntries"), m_recentLogEntries);
+            status.insert(QStringLiteral("recentLogEntryCount"), m_recentLogEntries.size());
+        }
+        if (!m_recentEvents.isEmpty()) {
+            status.insert(QStringLiteral("recentEvents"), m_recentEvents);
+            status.insert(QStringLiteral("recentEventCount"), m_recentEvents.size());
+        }
+        if (m_connection) {
+            status.insert(QStringLiteral("transportConnected"), m_connection->isConnected());
+            status.insert(QStringLiteral("transportConnecting"), m_connection->isConnecting());
+        }
+        status.insert(QStringLiteral("targetLease"), m_targetLease.toJson());
+        if (m_client) {
+            status.insert(QStringLiteral("serviceEnabled"),
+                          m_client->state() == QQmlDebugClient::Enabled);
+            status.insert(QStringLiteral("serviceState"), int(m_client->state()));
+        }
+        return status;
+    }
+
+    QJsonObject sendLauncherAgentRequest(const LauncherSession &launcher, const QString &method,
+                                         const QJsonObject &params, int timeoutMs,
+                                         QString *error) const
+    {
+        const QJsonObject controlResponse = sendLauncherControlRequest(
+                launcher.metadata, timeoutMs, QStringLiteral("QmlAgent.request"), {
+                    { QStringLiteral("method"), method },
+                    { QStringLiteral("params"), params },
+                }, error);
+        if (!error->isEmpty())
+            return {};
+        return controlResponse.value(QStringLiteral("result")).toObject();
+    }
+
+    bool launcherRouteUnsupportedStreamingTool(const PendingCall &call, QString *message) const
+    {
+        if (call.kind != PendingCall::Kind::TargetCommand)
+            return false;
+        if (call.targetMethod == QLatin1String("UI.subscribe")
+                || call.targetMethod == QLatin1String("UI.unsubscribe")
+                || call.targetMethod == QLatin1String("Log.enable")) {
+            *message = QStringLiteral("%1 requires a direct persistent MCP attach because it streams events to this MCP process. "
+                                      "Use qmlagent.connect_tcp or qmlagent.connect_local_socket for subscriptions. "
+                                      "Request/response tools such as qmlagent.ui_query, qmlagent.ui_wait_for, "
+                                      "qmlagent.input_click, qmlagent.preview_reload, and qmlagent.workflow_click_and_wait "
+                                      "can route through qmlagent-launcher automatically.")
+                               .arg(call.targetMethod);
+            return true;
+        }
+        return false;
+    }
+
+    void writeLauncherTargetResponse(const QJsonValue &requestId, const PendingCall &call,
+                                     const QJsonObject &targetResponse)
+    {
+        const bool isError = targetResponse.contains(QStringLiteral("error"));
+        QJsonValue payload = isError ? QJsonValue(targetResponse)
+                                     : targetResponse.value(QStringLiteral("result"));
+        if (!isError && call.verbosity == QLatin1String("summary")
+                && call.targetMethod == QLatin1String("UI.query")) {
+            payload = summarizedQueryResult(payload.toObject());
+        }
+        writeMessage(jsonResponse(requestId, toolResult(payload, isError)));
+    }
+
+    void routePendingCallViaLauncher(const QJsonValue &requestId, const PendingCall &call)
+    {
+        QString unsupported;
+        if (launcherRouteUnsupportedStreamingTool(call, &unsupported)) {
+            writeMessage(jsonResponse(requestId, toolErrorResult(unsupported)));
+            return;
+        }
+
+        LauncherSession launcher;
+        QString launcherError;
+        if (!resolveLauncherSession(m_timeoutMs, &launcher, &launcherError)) {
+            writeMessage(jsonResponse(requestId, toolErrorResult(
+                    QStringLiteral("%1\n\nLauncher gateway status: %2")
+                            .arg(notConnectedMessage(), launcherError))));
+            return;
+        }
+
+        if (call.kind == PendingCall::Kind::TargetCommand) {
+            QString requestError;
+            const QJsonObject targetResponse = sendLauncherAgentRequest(
+                    launcher, call.targetMethod, call.targetParams, m_timeoutMs, &requestError);
+            if (!requestError.isEmpty()) {
+                writeMessage(jsonResponse(requestId, toolErrorResult(requestError)));
+                return;
+            }
+            writeLauncherTargetResponse(requestId, call, targetResponse);
+            return;
+        }
+
+        routeWorkflowViaLauncher(requestId, launcher, call);
+    }
+
+    bool launcherWorkflowRequest(const LauncherSession &launcher, const QString &method,
+                                 const QJsonObject &params, QJsonObject *targetResponse,
+                                 QString *error) const
+    {
+        *targetResponse = sendLauncherAgentRequest(launcher, method, params, m_timeoutMs, error);
+        if (!error->isEmpty())
+            return false;
+        if (targetResponse->contains(QStringLiteral("error"))) {
+            *error = QStringLiteral("%1 failed through qmlagent-launcher gateway.").arg(method);
+            return false;
+        }
+        return true;
+    }
+
+    void routeWorkflowViaLauncher(const QJsonValue &requestId, const LauncherSession &launcher,
+                                  const PendingCall &call)
+    {
+        QJsonObject targetQuery;
+        QString error;
+        if (!launcherWorkflowRequest(launcher, QStringLiteral("UI.query"), {
+                { QStringLiteral("selector"), call.targetSelector },
+                { QStringLiteral("includeSource"), true },
+            }, &targetQuery, &error)) {
+            writeMessage(jsonResponse(requestId, toolResult(QJsonObject{
+                { QStringLiteral("error"), error },
+                { QStringLiteral("targetResponse"), targetQuery },
+            }, true)));
+            return;
+        }
+
+        const QJsonArray events;
+        const QJsonArray properties{ call.expectation.property };
+        QJsonObject beforeQuery;
+        if (call.kind != PendingCall::Kind::WorkflowClickAndWait) {
+            if (!launcherWorkflowRequest(launcher, QStringLiteral("UI.query"), {
+                    { QStringLiteral("selector"), call.expectedSelector },
+                    { QStringLiteral("includeSource"), true },
+                    { QStringLiteral("properties"), properties },
+                }, &beforeQuery, &error)) {
+                writeMessage(jsonResponse(requestId, toolResult(QJsonObject{
+                    { QStringLiteral("error"), error },
+                    { QStringLiteral("phase"), QStringLiteral("before-query") },
+                    { QStringLiteral("targetResponse"), beforeQuery },
+                }, true)));
+                return;
+            }
+        }
+
+        QJsonObject input;
+        if (call.kind == PendingCall::Kind::WorkflowClick
+                || call.kind == PendingCall::Kind::WorkflowClickAndWait) {
+            if (!launcherWorkflowRequest(launcher, QStringLiteral("Input.clickNode"), {
+                    { QStringLiteral("selector"), call.targetSelector },
+                }, &input, &error)) {
+                writeMessage(jsonResponse(requestId, toolResult(QJsonObject{
+                    { QStringLiteral("error"), error },
+                    { QStringLiteral("phase"), QStringLiteral("input") },
+                    { QStringLiteral("targetResponse"), input },
+                }, true)));
+                return;
+            }
+        } else {
+            if (!launcherWorkflowRequest(launcher, QStringLiteral("Input.dispatchKeyEvent"), {
+                    { QStringLiteral("selector"), call.targetSelector },
+                    { QStringLiteral("key"), call.key },
+                }, &input, &error)) {
+                writeMessage(jsonResponse(requestId, toolResult(QJsonObject{
+                    { QStringLiteral("error"), error },
+                    { QStringLiteral("phase"), QStringLiteral("input") },
+                    { QStringLiteral("targetResponse"), input },
+                }, true)));
+                return;
+            }
+        }
+
+        if (call.kind == PendingCall::Kind::WorkflowClickAndWait) {
+            QJsonObject waitParams{
+                { QStringLiteral("selector"), call.waitSelector },
+                { QStringLiteral("until"), call.waitUntil },
+            };
+            if (call.waitTimeoutMs >= 0)
+                waitParams.insert(QStringLiteral("timeoutMs"), call.waitTimeoutMs);
+
+            QJsonObject wait;
+            if (!launcherWorkflowRequest(launcher, QStringLiteral("UI.waitFor"), waitParams,
+                                         &wait, &error)) {
+                writeMessage(jsonResponse(requestId, toolResult(QJsonObject{
+                    { QStringLiteral("error"), error },
+                    { QStringLiteral("phase"), QStringLiteral("wait") },
+                    { QStringLiteral("targetResponse"), wait },
+                }, true)));
+                return;
+            }
+
+            QJsonObject report = clickAndWaitWorkflowReport(call.targetSelector,
+                                                            call.waitSelector,
+                                                            call.waitUntil,
+                                                            targetQuery,
+                                                            input,
+                                                            events,
+                                                            wait);
+            report.insert(QStringLiteral("gateway"), QStringLiteral("qmlagent-launcher"));
+            report.insert(QStringLiteral("eventStream"), QJsonObject{
+                { QStringLiteral("included"), false },
+                { QStringLiteral("reason"),
+                  QStringLiteral("Launcher-routed workflows use request/response calls; use direct MCP attach for streamed event capture.") },
+            });
+            writeMessage(jsonResponse(requestId, toolResult(
+                    call.verbosity == QLatin1String("summary")
+                            ? summarizedWorkflowReport(report)
+                            : report)));
+            return;
+        }
+
+        QJsonObject afterQuery;
+        if (!launcherWorkflowRequest(launcher, QStringLiteral("UI.query"), {
+                { QStringLiteral("selector"), call.expectedSelector },
+                { QStringLiteral("includeSource"), true },
+                { QStringLiteral("properties"), properties },
+            }, &afterQuery, &error)) {
+            writeMessage(jsonResponse(requestId, toolResult(QJsonObject{
+                { QStringLiteral("error"), error },
+                { QStringLiteral("phase"), QStringLiteral("after-query") },
+                { QStringLiteral("targetResponse"), afterQuery },
+            }, true)));
+            return;
+        }
+
+        const QString kind = call.kind == PendingCall::Kind::WorkflowClick
+                ? QStringLiteral("click-and-verify")
+                : QStringLiteral("key-and-verify");
+        QJsonObject report = groupedWorkflowReport(kind, call.targetSelector, call.key,
+                                                   call.expectedSelector,
+                                                   call.expectation,
+                                                   targetQuery,
+                                                   beforeQuery,
+                                                   input,
+                                                   events,
+                                                   afterQuery);
+        report.insert(QStringLiteral("gateway"), QStringLiteral("qmlagent-launcher"));
+        report.insert(QStringLiteral("eventStream"), QJsonObject{
+            { QStringLiteral("included"), false },
+            { QStringLiteral("reason"),
+              QStringLiteral("Launcher-routed workflows use request/response calls; use direct MCP attach for streamed event capture.") },
+        });
+        writeMessage(jsonResponse(requestId, toolResult(
+                call.verbosity == QLatin1String("summary")
+                        ? summarizedWorkflowReport(report)
+                        : report)));
+    }
+
+    static void appendBounded(QJsonArray *array, const QJsonObject &value, int limit = 20)
+    {
+        array->append(value);
+        while (array->size() > limit)
+            array->removeFirst();
+    }
+
+    QJsonObject connectTcpTarget(const QString &host, quint16 port, int timeoutMs)
+    {
+        const QString endpoint = QmlAgentTargetLease::tcpEndpoint(host, port);
+        if (m_targetLease.isLocked() && m_targetLease.endpoint() == endpoint
+                && isTargetConnected()) {
+            return targetStatus();
+        }
+
+        QmlAgentTargetLease newLease;
+        QString leaseError;
+        if (!newLease.acquire(endpoint, QStringLiteral("mcp"), &leaseError)) {
+            m_lastError = leaseError;
+            return targetStatus();
+        }
+
+        disconnectTarget(QStringLiteral("reconnect"));
+        m_recentEvents = {};
+        m_recentLogEntries = {};
+        m_host = host;
+        m_port = port;
+        m_socketPath.clear();
+        m_lastError.clear();
+        m_disconnectReason.clear();
+        m_targetLease = std::move(newLease);
+
+        createTargetConnection();
+        m_connection->connectToHost(host, port);
+        if (!m_connection->waitForConnected(timeoutMs)) {
+            m_lastError = QStringLiteral("Timed out connecting to QmlAgent target at %1:%2. "
+                                         "If the target is already running, it may already have "
+                                         "an attached QML debug client.")
+                                  .arg(host)
+                                  .arg(port);
+            disconnectTarget(QStringLiteral("connect-timeout"));
+            return targetStatus();
+        }
+
+        if (m_client->state() != QQmlDebugClient::Enabled) {
+            m_lastError = QStringLiteral("Connected to %1:%2, but QmlAgent service is not enabled. "
+                                         "Launch the target with services:QmlAgent.")
+                                  .arg(host)
+                                  .arg(port);
+            disconnectTarget(QStringLiteral("service-not-enabled"));
+            return targetStatus();
+        }
+
+        enableStartupLogReplay();
+        return targetStatus();
+    }
+
+    QJsonObject connectLocalSocketTarget(const QString &path, int timeoutMs)
+    {
+        const QString endpoint = QmlAgentTargetLease::localSocketEndpoint(path);
+        if (m_targetLease.isLocked() && m_targetLease.endpoint() == endpoint
+                && isTargetConnected()) {
+            return targetStatus();
+        }
+
+        QmlAgentTargetLease newLease;
+        QString leaseError;
+        if (!newLease.acquire(endpoint, QStringLiteral("mcp"), &leaseError)) {
+            m_lastError = leaseError;
+            return targetStatus();
+        }
+
+        disconnectTarget(QStringLiteral("reconnect"));
+        m_recentEvents = {};
+        m_recentLogEntries = {};
+        m_host.clear();
+        m_port = 0;
+        m_socketPath = path;
+        m_lastError.clear();
+        m_disconnectReason.clear();
+        m_targetLease = std::move(newLease);
+
+        createTargetConnection();
+        QFile::remove(path);
+        m_connection->startLocalServer(path);
+        if (!m_connection->waitForConnected(timeoutMs)) {
+            m_lastError = QStringLiteral("Timed out waiting for QmlAgent target on local socket %1.")
+                                  .arg(path);
+            disconnectTarget(QStringLiteral("connect-timeout"));
+            return targetStatus();
+        }
+
+        if (m_client->state() != QQmlDebugClient::Enabled) {
+            m_lastError = QStringLiteral("Connected on local socket %1, but QmlAgent service is not "
+                                         "enabled. Launch the target with services:QmlAgent.")
+                                  .arg(path);
+            disconnectTarget(QStringLiteral("service-not-enabled"));
+            return targetStatus();
+        }
+
+        enableStartupLogReplay();
+        return targetStatus();
+    }
+
+    void enableStartupLogReplay()
+    {
+        if (!m_client)
+            return;
+        const int targetId = ++m_nextTargetId;
+        m_client->sendMessage(compactJson(makeRequest(targetId, QStringLiteral("Log.enable"), {
+            { QStringLiteral("replayBuffered"), true },
+        })));
+    }
+
+    void createTargetConnection()
+    {
+        m_connection = std::make_unique<QQmlDebugConnection>();
+        m_client = std::make_unique<QmlAgentClient>(m_connection.get());
+        connect(m_client.get(), &QmlAgentClient::received,
+                this, &QmlAgentMcpServer::handleTargetMessage);
+        connect(m_connection.get(), &QQmlDebugConnection::disconnected, this, [this]() {
+            m_disconnectReason = QStringLiteral("target-disconnected");
+            m_uiSubscribed = false;
+            m_targetLease.release();
+            if (m_currentCall.has_value()) {
+                writeMessage(jsonResponse(m_currentCall->mcpId,
+                                          toolErrorResult(QStringLiteral("QmlAgent target disconnected while waiting for %1.")
+                                                                  .arg(m_currentCall->targetMethod))));
+                m_currentCall.reset();
+            }
+            if (m_workflow.has_value()) {
+                const QJsonValue mcpId = m_workflow->call.mcpId;
+                m_workflow.reset();
+                writeMessage(jsonResponse(mcpId, toolErrorResult(
+                        QStringLiteral("QmlAgent target disconnected during workflow."))));
+            }
+        });
+        connect(m_connection.get(), &QQmlDebugConnection::socketError, this,
+                [this](QAbstractSocket::SocketError error) {
+            m_lastError = QStringLiteral("socket error %1").arg(int(error));
+        });
+    }
+
+    void disconnectTarget(const QString &reason)
+    {
+        m_commandTimeout.stop();
+        m_currentCall.reset();
+        m_workflow.reset();
+        m_queue.clear();
+        m_uiSubscribed = false;
+        if (m_connection)
+            m_connection->close();
+        m_client.reset();
+        m_connection.reset();
+        m_targetLease.release();
+        if (reason != QLatin1String("reconnect"))
+            m_disconnectReason = reason;
+    }
+
+    void dispatchNextTargetCommand()
+    {
+        if (m_currentCall.has_value() || m_workflow.has_value())
+            return;
+
+        if (m_queue.isEmpty()) {
+            quitIfInputClosedAndIdle();
+            return;
+        }
+
+        PendingCall call = m_queue.dequeue();
+        if (call.kind == PendingCall::Kind::Disconnect) {
+            disconnectTarget(QStringLiteral("client-request"));
+            writeMessage(jsonResponse(call.mcpId, toolResult(targetStatus())));
+            dispatchNextTargetCommand();
+            return;
+        }
+
+        if (call.kind != PendingCall::Kind::TargetCommand) {
+            startWorkflow(call);
+            return;
+        }
+
+        call.targetId = ++m_nextTargetId;
+        m_currentCall = call;
+        m_commandTimeout.start(m_timeoutMs);
+        m_client->sendMessage(compactJson(makeRequest(m_currentCall->targetId,
+                                                       m_currentCall->targetMethod,
+                                                       m_currentCall->targetParams)));
+    }
+
+    void handleTargetMessage(const QByteArray &message)
+    {
+        QJsonParseError parseError;
+        const QJsonDocument document = QJsonDocument::fromJson(message, &parseError);
+        if (parseError.error != QJsonParseError::NoError || !document.isObject())
+            return;
+
+        const QJsonObject object = document.object();
+        if (!object.contains(QStringLiteral("id"))) {
+            if (m_workflow.has_value())
+                m_workflow->events.append(object);
+            const QString targetMethod = object.value(QStringLiteral("method")).toString();
+            appendBounded(&m_recentEvents, object);
+            if (targetMethod == QLatin1String("Log.entryAdded")) {
+                const QJsonObject entry = object.value(QStringLiteral("params")).toObject()
+                        .value(QStringLiteral("entry")).toObject();
+                if (!entry.isEmpty())
+                    appendBounded(&m_recentLogEntries, entry);
+            }
+            writeMessage({
+                { QStringLiteral("jsonrpc"), QStringLiteral("2.0") },
+                { QStringLiteral("method"), QStringLiteral("notifications/message") },
+                { QStringLiteral("params"), QJsonObject{
+                    { QStringLiteral("level"), QStringLiteral("info") },
+                    { QStringLiteral("logger"), QStringLiteral("qmlagent") },
+                    { QStringLiteral("message"), targetMethod.isEmpty()
+                      ? QStringLiteral("QmlAgent event")
+                      : QStringLiteral("QmlAgent event: %1").arg(targetMethod) },
+                    { QStringLiteral("data"), object },
+                } },
+            });
+            return;
+        }
+
+        if (m_workflow.has_value()
+                && object.value(QStringLiteral("id")).toInt(-1) == m_workflow->targetId) {
+            handleWorkflowResponse(object);
+            return;
+        }
+
+        if (!m_currentCall.has_value()
+                || object.value(QStringLiteral("id")).toInt(-1) != m_currentCall->targetId) {
+            return;
+        }
+
+        m_commandTimeout.stop();
+        updateSubscriptionState(*m_currentCall, object);
+        const bool isError = object.contains(QStringLiteral("error"));
+        QJsonValue payload = isError ? QJsonValue(object) : object.value(QStringLiteral("result"));
+        if (!isError && m_currentCall->verbosity == QLatin1String("summary")
+                && m_currentCall->targetMethod == QLatin1String("UI.query")) {
+            payload = summarizedQueryResult(payload.toObject());
+        }
+        writeMessage(jsonResponse(m_currentCall->mcpId, toolResult(payload, isError)));
+        m_currentCall.reset();
+        dispatchNextTargetCommand();
+    }
+
+    void handleInputClosed()
+    {
+        m_inputClosed = true;
+        quitIfInputClosedAndIdle();
+    }
+
+    void handleStdinActivated()
+    {
+        if (m_stdinNotifier)
+            m_stdinNotifier->setEnabled(false);
+
+        char buffer[4096];
+        while (true) {
+            const ssize_t bytesRead = ::read(STDIN_FILENO, buffer, sizeof(buffer));
+            if (bytesRead > 0) {
+                m_stdinBuffer.append(buffer, qsizetype(bytesRead));
+                processBufferedInputLines();
+                continue;
+            }
+
+            if (bytesRead == 0) {
+                processBufferedInputLines(true);
+                if (m_stdinNotifier)
+                    m_stdinNotifier->setEnabled(false);
+                handleInputClosed();
+                return;
+            }
+
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                if (m_stdinNotifier && !m_inputClosed)
+                    m_stdinNotifier->setEnabled(true);
+                return;
+            }
+
+            if (m_stdinNotifier)
+                m_stdinNotifier->setEnabled(false);
+            handleInputClosed();
+            return;
+        }
+    }
+
+    void processBufferedInputLines(bool flushRemainder = false)
+    {
+        while (true) {
+            const qsizetype newline = m_stdinBuffer.indexOf('\n');
+            if (newline < 0)
+                break;
+
+            const QByteArray line = m_stdinBuffer.left(newline + 1);
+            m_stdinBuffer.remove(0, newline + 1);
+            if (!line.trimmed().isEmpty())
+                handleInputLine(line);
+        }
+
+        if (flushRemainder && !m_stdinBuffer.trimmed().isEmpty()) {
+            const QByteArray line = m_stdinBuffer;
+            m_stdinBuffer.clear();
+            handleInputLine(line);
+        }
+    }
+
+    void quitIfInputClosedAndIdle()
+    {
+        if (m_inputClosed && !m_currentCall.has_value() && !m_workflow.has_value()
+                && m_queue.isEmpty()) {
+            QCoreApplication::quit();
+        }
+    }
+
+    void targetCommandTimedOut()
+    {
+        if (m_workflow.has_value()) {
+            finishWorkflowWithError(QStringLiteral("Timed out waiting for %1 response.")
+                                            .arg(m_workflow->targetMethod),
+                                    {}, false);
+            return;
+        }
+
+        if (!m_currentCall.has_value())
+            return;
+
+        writeMessage(jsonResponse(m_currentCall->mcpId,
+                                  toolErrorResult(QStringLiteral("Timed out waiting for %1 response.")
+                                                          .arg(m_currentCall->targetMethod))));
+        m_currentCall.reset();
+        dispatchNextTargetCommand();
+    }
+
+    void updateSubscriptionState(const PendingCall &call, const QJsonObject &response)
+    {
+        if (response.contains(QStringLiteral("error")))
+            return;
+        if (call.targetMethod == QLatin1String("UI.subscribe"))
+            m_uiSubscribed = true;
+        else if (call.targetMethod == QLatin1String("UI.unsubscribe"))
+            m_uiSubscribed = false;
+    }
+
+    void startWorkflow(const PendingCall &call)
+    {
+        WorkflowState state;
+        state.call = call;
+        state.subscribedBefore = m_uiSubscribed;
+        m_workflow = state;
+        sendWorkflowRequest(WorkflowState::Phase::TargetQuery, QStringLiteral("UI.query"), {
+            { QStringLiteral("selector"), call.targetSelector },
+            { QStringLiteral("includeSource"), true },
+        });
+    }
+
+    void sendWorkflowRequest(WorkflowState::Phase phase, const QString &method,
+                             const QJsonObject &params)
+    {
+        if (!m_workflow.has_value())
+            return;
+
+        m_workflow->phase = phase;
+        m_workflow->targetId = ++m_nextTargetId;
+        m_workflow->targetMethod = method;
+        m_commandTimeout.start(m_timeoutMs);
+        m_client->sendMessage(compactJson(makeRequest(m_workflow->targetId, method, params)));
+    }
+
+    void handleWorkflowResponse(const QJsonObject &response)
+    {
+        m_commandTimeout.stop();
+        if (!m_workflow.has_value())
+            return;
+
+        if (m_workflow->finishingWithError
+                && m_workflow->phase == WorkflowState::Phase::Unsubscribe) {
+            if (!response.contains(QStringLiteral("error")))
+                m_uiSubscribed = false;
+            finishWorkflowWithErrorPayload(m_workflow->errorPayload);
+            return;
+        }
+
+        if (response.contains(QStringLiteral("error"))) {
+            finishWorkflowWithError(QStringLiteral("%1 failed in %2.")
+                                            .arg(m_workflow->targetMethod,
+                                                 workflowPhaseName(m_workflow->phase)),
+                                    response);
+            return;
+        }
+
+        const PendingCall call = m_workflow->call;
+        const QJsonArray properties{ call.expectation.property };
+        switch (m_workflow->phase) {
+        case WorkflowState::Phase::TargetQuery:
+            m_workflow->targetQuery = response;
+            if (call.kind == PendingCall::Kind::WorkflowClickAndWait) {
+                if (m_workflow->subscribedBefore) {
+                    sendWorkflowInput();
+                    return;
+                }
+                sendWorkflowRequest(WorkflowState::Phase::Subscribe, QStringLiteral("UI.subscribe"), {});
+                return;
+            }
+            sendWorkflowRequest(WorkflowState::Phase::BeforeQuery, QStringLiteral("UI.query"), {
+                { QStringLiteral("selector"), call.expectedSelector },
+                { QStringLiteral("includeSource"), true },
+                { QStringLiteral("properties"), properties },
+            });
+            return;
+        case WorkflowState::Phase::BeforeQuery:
+            m_workflow->beforeQuery = response;
+            if (m_workflow->subscribedBefore) {
+                sendWorkflowInput();
+                return;
+            }
+            sendWorkflowRequest(WorkflowState::Phase::Subscribe, QStringLiteral("UI.subscribe"), {});
+            return;
+        case WorkflowState::Phase::Subscribe:
+            m_uiSubscribed = true;
+            m_workflow->temporarySubscriptionActive = true;
+            sendWorkflowInput();
+            return;
+        case WorkflowState::Phase::Input:
+            m_workflow->input = response;
+            if (call.kind == PendingCall::Kind::WorkflowClickAndWait) {
+                QJsonObject waitParams{
+                    { QStringLiteral("selector"), call.waitSelector },
+                    { QStringLiteral("until"), call.waitUntil },
+                };
+                if (call.waitTimeoutMs >= 0)
+                    waitParams.insert(QStringLiteral("timeoutMs"), call.waitTimeoutMs);
+                sendWorkflowRequest(WorkflowState::Phase::Wait, QStringLiteral("UI.waitFor"),
+                                    waitParams);
+                return;
+            }
+            sendWorkflowRequest(WorkflowState::Phase::AfterQuery, QStringLiteral("UI.query"), {
+                { QStringLiteral("selector"), call.expectedSelector },
+                { QStringLiteral("includeSource"), true },
+                { QStringLiteral("properties"), properties },
+            });
+            return;
+        case WorkflowState::Phase::Wait:
+            m_workflow->wait = response;
+            if (m_workflow->subscribedBefore) {
+                finishWorkflow();
+                return;
+            }
+            sendWorkflowRequest(WorkflowState::Phase::Unsubscribe, QStringLiteral("UI.unsubscribe"), {});
+            return;
+        case WorkflowState::Phase::AfterQuery:
+            m_workflow->afterQuery = response;
+            if (m_workflow->subscribedBefore) {
+                finishWorkflow();
+                return;
+            }
+            sendWorkflowRequest(WorkflowState::Phase::Unsubscribe, QStringLiteral("UI.unsubscribe"), {});
+            return;
+        case WorkflowState::Phase::Unsubscribe:
+            m_uiSubscribed = false;
+            finishWorkflow();
+            return;
+        }
+    }
+
+    void sendWorkflowInput()
+    {
+        if (!m_workflow.has_value())
+            return;
+
+        const PendingCall call = m_workflow->call;
+        if (call.kind == PendingCall::Kind::WorkflowClick
+                || call.kind == PendingCall::Kind::WorkflowClickAndWait) {
+            sendWorkflowRequest(WorkflowState::Phase::Input, QStringLiteral("Input.clickNode"), {
+                { QStringLiteral("selector"), call.targetSelector },
+            });
+            return;
+        }
+
+        sendWorkflowRequest(WorkflowState::Phase::Input, QStringLiteral("Input.dispatchKeyEvent"), {
+            { QStringLiteral("selector"), call.targetSelector },
+            { QStringLiteral("key"), call.key },
+        });
+    }
+
+    void finishWorkflow()
+    {
+        if (!m_workflow.has_value())
+            return;
+
+        const PendingCall call = m_workflow->call;
+        if (call.kind == PendingCall::Kind::WorkflowClickAndWait) {
+            const QJsonObject report = clickAndWaitWorkflowReport(call.targetSelector,
+                                                                  call.waitSelector,
+                                                                  call.waitUntil,
+                                                                  m_workflow->targetQuery,
+                                                                  m_workflow->input,
+                                                                  m_workflow->events,
+                                                                  m_workflow->wait);
+            writeMessage(jsonResponse(call.mcpId, toolResult(
+                    call.verbosity == QLatin1String("summary")
+                            ? summarizedWorkflowReport(report)
+                            : report)));
+            m_workflow.reset();
+            dispatchNextTargetCommand();
+            return;
+        }
+        const QString kind = call.kind == PendingCall::Kind::WorkflowClick
+                ? QStringLiteral("click-and-verify")
+                : QStringLiteral("key-and-verify");
+        const QJsonObject report = groupedWorkflowReport(kind, call.targetSelector, call.key,
+                                                         call.expectedSelector,
+                                                         call.expectation,
+                                                         m_workflow->targetQuery,
+                                                         m_workflow->beforeQuery,
+                                                         m_workflow->input,
+                                                         m_workflow->events,
+                                                         m_workflow->afterQuery);
+        writeMessage(jsonResponse(call.mcpId, toolResult(
+                call.verbosity == QLatin1String("summary")
+                        ? summarizedWorkflowReport(report)
+                        : report)));
+        m_workflow.reset();
+        dispatchNextTargetCommand();
+    }
+
+    void finishWorkflowWithError(const QString &message, const QJsonObject &targetResponse = {},
+                                 bool cleanupTemporarySubscription = true)
+    {
+        if (!m_workflow.has_value())
+            return;
+
+        QJsonObject payload{
+            { QStringLiteral("error"), message },
+            { QStringLiteral("phase"), workflowPhaseName(m_workflow->phase) },
+        };
+        if (!targetResponse.isEmpty())
+            payload.insert(QStringLiteral("targetResponse"), targetResponse);
+        if (cleanupTemporarySubscription
+                && m_workflow->temporarySubscriptionActive
+                && !m_workflow->finishingWithError
+                && m_workflow->phase != WorkflowState::Phase::Unsubscribe) {
+            m_workflow->finishingWithError = true;
+            m_workflow->errorPayload = payload;
+            sendWorkflowRequest(WorkflowState::Phase::Unsubscribe,
+                                QStringLiteral("UI.unsubscribe"), {});
+            return;
+        }
+
+        finishWorkflowWithErrorPayload(payload);
+    }
+
+    void finishWorkflowWithErrorPayload(const QJsonObject &payload)
+    {
+        if (!m_workflow.has_value())
+            return;
+
+        const QJsonValue mcpId = m_workflow->call.mcpId;
+        m_workflow.reset();
+        writeMessage(jsonResponse(mcpId, toolResult(payload, true)));
+        dispatchNextTargetCommand();
+    }
+
+    std::unique_ptr<QQmlDebugConnection> m_connection;
+    std::unique_ptr<QmlAgentClient> m_client;
+    int m_timeoutMs = 5000;
+    QString m_host;
+    quint16 m_port = 0;
+    QString m_socketPath;
+    QString m_lastError;
+    QString m_disconnectReason;
+    QSocketNotifier *m_stdinNotifier = nullptr;
+    QByteArray m_stdinBuffer;
+    QQueue<PendingCall> m_queue;
+    std::optional<PendingCall> m_currentCall;
+    std::optional<WorkflowState> m_workflow;
+    QJsonArray m_recentEvents;
+    QJsonArray m_recentLogEntries;
+    QTimer m_commandTimeout;
+    int m_nextTargetId = 0;
+    bool m_uiSubscribed = false;
+    bool m_inputClosed = false;
+    QmlAgentTargetLease m_targetLease;
+};
+
+int main(int argc, char **argv)
+{
+    QCoreApplication app(argc, argv);
+    const QString executableName = QFileInfo(QString::fromLocal8Bit(argv[0])).baseName();
+    QCoreApplication::setApplicationName(executableName);
+    QCoreApplication::setApplicationVersion(QStringLiteral("0.1"));
+
+    QStringList rawArguments = QCoreApplication::arguments();
+    if (executableName == QLatin1String("qmlagentctl"))
+        return runCtlSubcommand(rawArguments);
+
+    if (executableName == QLatin1String("qmlagent-mcp")) {
+        QCommandLineParser parser;
+        parser.setApplicationDescription(QStringLiteral("QmlAgent stdio MCP server."));
+        parser.addHelpOption();
+        parser.addVersionOption();
+        const QCommandLineOption timeoutOption(QStringLiteral("timeout"),
+                                               QStringLiteral("Connection/request timeout in milliseconds."),
+                                               QStringLiteral("ms"), QStringLiteral("5000"));
+        parser.addOption(timeoutOption);
+        parser.process(rawArguments);
+
+        bool ok = false;
+        const int timeoutMs = parser.value(timeoutOption).toInt(&ok);
+        if (!ok || timeoutMs <= 0)
+            return fail(QStringLiteral("--timeout must be a positive integer."));
+
+        QmlAgentMcpServer server(timeoutMs, &app);
+        return app.exec();
+    }
+
+    return fail(QStringLiteral("Unsupported QmlAgent executable name '%1'. Use qmlagentctl or qmlagent-mcp.")
+                        .arg(executableName));
+}
+
+#include "main.moc"

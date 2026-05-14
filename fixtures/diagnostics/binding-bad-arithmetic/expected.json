@@ -1,0 +1,19 @@
+{
+  "command": "Diagnostics.analyzeBinding",
+  "params": {
+    "selector": "id=\"badArithmeticTarget\"",
+    "property": "y"
+  },
+  "expectedBinding": {
+    "ok": true,
+    "property": "y",
+    "value": 320,
+    "provenanceKind": "binding",
+    "bindingKind": "qpropertyBinding",
+    "expressionContains": "root.height + 80",
+    "candidateIdentifier": "root.height",
+    "sourceMethod": "qqmlpropertybinding-source-location",
+    "dependencySummaryHasRuntimeDependencies": true,
+    "dependencyLimitationContains": "not yet exposed"
+  }
+}

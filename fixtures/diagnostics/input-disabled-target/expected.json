@@ -1,0 +1,15 @@
+{
+  "command": "Diagnostics.analyzeNode",
+  "params": {
+    "selector": "objectName=\"fixture.target\"",
+    "checks": ["clickable"]
+  },
+  "expectedIssues": [
+    {
+      "id": "input.not_clickable",
+      "nodeObjectName": "fixture.target",
+      "sourceMethod": "qqmldata-direct",
+      "evidenceContains": "enabled=false"
+    }
+  ]
+}

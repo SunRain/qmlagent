@@ -1,0 +1,14 @@
+{
+  "command": "Diagnostics.analyzeNode",
+  "params": {
+    "selector": "objectName=\"fixture.target\"",
+    "checks": ["insideViewport"]
+  },
+  "expectedIssues": [
+    {
+      "id": "layout.outside_viewport",
+      "nodeObjectName": "fixture.target",
+      "sourceMethod": "qqmldata-direct"
+    }
+  ]
+}

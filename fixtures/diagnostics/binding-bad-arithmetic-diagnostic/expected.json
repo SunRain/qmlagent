@@ -1,0 +1,17 @@
+{
+  "command": "Diagnostics.analyzeNode",
+  "params": {
+    "selector": "id=\"badArithmeticTarget\"",
+    "checks": ["insideViewport"]
+  },
+  "expectedIssues": [
+    {
+      "id": "layout.outside_viewport",
+      "nodeObjectName": "fixture.bindingBadArithmeticTarget",
+      "sourceMethod": "qqmldata-direct",
+      "repairHintKind": "inspect-binding-provenance",
+      "requiresBindingProvenance": true,
+      "bindingExpressionContains": "root.height + 80"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "command": "Diagnostics.analyzeBinding",
+  "params": {
+    "selector": "id=\"literalTarget\"",
+    "property": "x"
+  },
+  "expectedBinding": {
+    "ok": true,
+    "property": "x",
+    "value": 14,
+    "provenanceKind": "runtimeValue",
+    "sourceAssignmentContains": "14"
+  }
+}

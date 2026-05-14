@@ -1,0 +1,21 @@
+{
+  "command": "Diagnostics.analyzeBinding",
+  "params": {
+    "selector": "id=\"multilineTarget\"",
+    "property": "computedValue"
+  },
+  "expectedBinding": {
+    "ok": true,
+    "property": "computedValue",
+    "value": 47,
+    "provenanceKind": "binding",
+    "bindingKind": "qmlBinding",
+    "expressionContains": "root.baseValue + root.extraValue + 2",
+    "candidateIdentifier": "root.extraValue",
+    "sourceMethod": "qqmlbinding-source-location",
+    "dependency": {
+      "property": "extraValue",
+      "value": 5
+    }
+  }
+}

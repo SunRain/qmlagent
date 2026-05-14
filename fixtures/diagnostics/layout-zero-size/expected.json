@@ -1,0 +1,14 @@
+{
+  "command": "Diagnostics.analyzeNode",
+  "params": {
+    "selector": "objectName=\"fixture.target\"",
+    "checks": ["minSize"]
+  },
+  "expectedIssues": [
+    {
+      "id": "layout.zero_size",
+      "nodeObjectName": "fixture.target",
+      "sourceMethod": "qqmldata-direct"
+    }
+  ]
+}

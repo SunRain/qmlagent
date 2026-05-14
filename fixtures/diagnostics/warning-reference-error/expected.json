@@ -1,0 +1,11 @@
+{
+  "command": "Diagnostics.analyzeTree",
+  "params": {},
+  "expectedIssues": [
+    {
+      "id": "qml.warning",
+      "messageContains": "ReferenceError",
+      "sourceMethod": "qml-warning"
+    }
+  ]
+}

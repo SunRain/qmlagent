@@ -1,0 +1,21 @@
+{
+  "command": "Diagnostics.analyzeBinding",
+  "params": {
+    "selector": "id=\"groupedBindingTarget\"",
+    "property": "anchors.leftMargin"
+  },
+  "expectedBinding": {
+    "ok": true,
+    "property": "anchors.leftMargin",
+    "value": 20,
+    "provenanceKind": "binding",
+    "bindingKind": "qmlBinding",
+    "expressionContains": "root.gutter + 6",
+    "candidateIdentifier": "root.gutter",
+    "sourceMethod": "qqmlbinding-source-location",
+    "dependency": {
+      "property": "gutter",
+      "value": 14
+    }
+  }
+}

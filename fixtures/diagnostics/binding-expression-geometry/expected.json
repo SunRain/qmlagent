@@ -1,0 +1,19 @@
+{
+  "command": "Diagnostics.analyzeBinding",
+  "params": {
+    "selector": "id=\"bindingTarget\"",
+    "property": "x"
+  },
+  "expectedBinding": {
+    "ok": true,
+    "property": "x",
+    "value": 73,
+    "provenanceKind": "binding",
+    "bindingKind": "qpropertyBinding",
+    "expressionContains": "root.baseX + 3",
+    "candidateIdentifier": "root.baseX",
+    "sourceMethod": "qqmlpropertybinding-source-location",
+    "dependencySummaryHasRuntimeDependencies": true,
+    "dependencyLimitationContains": "not yet exposed"
+  }
+}

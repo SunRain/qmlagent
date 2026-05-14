@@ -1,0 +1,15 @@
+{
+  "command": "Diagnostics.analyzeNode",
+  "params": {
+    "selector": "objectName=\"fixture.target\"",
+    "checks": ["editable"]
+  },
+  "expectedIssues": [
+    {
+      "id": "input.not_editable",
+      "nodeObjectName": "fixture.target",
+      "sourceMethod": "qqmldata-direct",
+      "evidenceContains": "readOnly=true"
+    }
+  ]
+}

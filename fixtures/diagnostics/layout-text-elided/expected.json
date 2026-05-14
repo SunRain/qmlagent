@@ -1,0 +1,15 @@
+{
+  "command": "Diagnostics.analyzeNode",
+  "params": {
+    "selector": "objectName=\"fixture.target\"",
+    "checks": ["textElided"]
+  },
+  "expectedIssues": [
+    {
+      "id": "layout.text_elided",
+      "nodeObjectName": "fixture.target",
+      "sourceMethod": "qqmldata-direct",
+      "evidenceContains": "truncated=true"
+    }
+  ]
+}

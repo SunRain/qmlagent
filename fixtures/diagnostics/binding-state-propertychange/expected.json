@@ -1,0 +1,18 @@
+{
+  "command": "Diagnostics.analyzeBinding",
+  "params": {
+    "selector": "id=\"stateBindingTarget\"",
+    "property": "x"
+  },
+  "expectedBinding": {
+    "ok": true,
+    "property": "x",
+    "value": 52,
+    "provenanceKind": "binding",
+    "bindingKind": "qpropertyBinding",
+    "expressionContains": "root.targetX + 8",
+    "candidateIdentifier": "root.targetX",
+    "dependencySummaryHasRuntimeDependencies": true,
+    "dependencyLimitationContains": "not yet exposed"
+  }
+}

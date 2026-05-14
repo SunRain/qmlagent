@@ -1,0 +1,15 @@
+{
+  "command": "Diagnostics.analyzeNode",
+  "params": {
+    "selector": "objectName=\"fixture.target\"",
+    "checks": ["childExceedsParent"]
+  },
+  "expectedIssues": [
+    {
+      "id": "layout.child_exceeds_parent",
+      "nodeObjectName": "fixture.target",
+      "sourceMethod": "qqmldata-direct",
+      "requiresBlameChain": true
+    }
+  ]
+}

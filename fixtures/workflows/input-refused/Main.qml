@@ -1,0 +1,33 @@
+// Copyright (C) 2026 Penk Chen <penkia@gmail.com>
+// SPDX-License-Identifier: Apache-2.0
+
+import QtQuick
+
+Window {
+    width: 240
+    height: 160
+    visible: true
+
+    Rectangle {
+        width: 140
+        height: 40
+        color: "#8c959f"
+
+        MouseArea {
+            objectName: "fixture.action"
+            anchors.fill: parent
+            enabled: false
+            onClicked: result.visible = true
+        }
+    }
+
+    Rectangle {
+        id: result
+        objectName: "fixture.result"
+        y: 64
+        width: 120
+        height: 32
+        color: "#2f7d32"
+        visible: false
+    }
+}

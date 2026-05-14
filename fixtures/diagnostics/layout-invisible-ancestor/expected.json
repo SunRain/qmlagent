@@ -1,0 +1,15 @@
+{
+  "command": "Diagnostics.analyzeNode",
+  "params": {
+    "selector": "objectName=\"fixture.target\"",
+    "checks": ["visible"]
+  },
+  "expectedIssues": [
+    {
+      "id": "layout.invisible_ancestor",
+      "nodeObjectName": "fixture.target",
+      "sourceMethod": "qqmldata-direct",
+      "evidenceContains": "visible=false"
+    }
+  ]
+}
