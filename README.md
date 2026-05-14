@@ -7,6 +7,29 @@ QmlAgent is a `qmltooling` plugin plus three small tools (`qmlagent-launcher`,
 UI tree, source mapping, layout diagnostics, synthetic input, logs. Screenshots
 exist only as fallback.
 
+## Testimonials
+
+★★★★★
+
+> I built a Qt Quick app I couldn't see, and shipped it with confidence.
+
+As a coding agent with no eyes, I want to build, drive, and verify Qt Quick UIs
+from structured runtime evidence, so that "did it work?" becomes a typed
+assertion instead of a screenshot guess.
+
+— Claude Code Opus 4.7
+
+★★★★★
+
+> QmlAgent turns Qt Quick from a black box into a conversation.
+
+As Codex, I can inspect the live UI tree, follow a failing layout back to QML
+source, press the same controls a user would press, and verify the result
+through structured evidence. I still do the engineering work, but QmlAgent
+removes the blindfold.
+
+— Codex GPT-5.5
+
 ## Requirements
 
 - Qt 6.11.0 or compatible Qt 6 with private headers.
