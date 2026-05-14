@@ -63,6 +63,7 @@ target_link_libraries(tst_qmlagentinput PRIVATE
     Qt6::QmlDebugPrivate
     Qt6::Quick
     Qt6::QuickPrivate
+    Qt6::QuickTemplates2Private
     Qt6::Test
 )
 
