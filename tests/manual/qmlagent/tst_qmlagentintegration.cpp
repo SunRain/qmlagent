@@ -3635,7 +3635,6 @@ Window {
     writeRequest(mcpToolCall(2, QStringLiteral("qmlagent.target_status"), {}));
     writeRequest(mcpToolCall(3, QStringLiteral("qmlagent.ui_query"), {
         { QStringLiteral("selector"), QStringLiteral("type=\"Rectangle\"") },
-        { QStringLiteral("verbosity"), QStringLiteral("summary") },
     }));
     QByteArray output = waitForOutput(&client, QByteArrayLiteral("\"id\":3"));
     writeRequest(mcpToolCall(4, QStringLiteral("qmlagent.preview_reload"), {
@@ -3668,6 +3667,10 @@ Window {
     const QJsonObject query = responses.value(3).value(QStringLiteral("result")).toObject()
             .value(QStringLiteral("structuredContent")).toObject();
     QVERIFY2(query.value(QStringLiteral("matchCount")).toInt() > 0, output.constData());
+    QCOMPARE(query.value(QStringLiteral("moreAvailable")).toBool(), true);
+    QVERIFY2(query.value(QStringLiteral("omittedFields")).toArray()
+                     .contains(QStringLiteral("children")),
+             output.constData());
 
     const QJsonObject reload = responses.value(4).value(QStringLiteral("result")).toObject()
             .value(QStringLiteral("structuredContent")).toObject();
@@ -3976,6 +3979,12 @@ void QmlAgentIntegrationTest::referenceClientMcpPersistentMode()
             .value(QStringLiteral("structuredContent")).toObject();
     const QJsonArray matches = queryContent.value(QStringLiteral("matches")).toArray();
     QCOMPARE(matches.size(), 1);
+    QCOMPARE(queryContent.value(QStringLiteral("moreAvailable")).toBool(), true);
+    QVERIFY2(queryContent.value(QStringLiteral("omittedFields")).toArray()
+                     .contains(QStringLiteral("children")),
+             output.constData());
+    QVERIFY2(!matches.at(0).toObject().contains(QStringLiteral("children")),
+             output.constData());
     QCOMPARE(matches.at(0).toObject().value(QStringLiteral("objectName")).toString(),
              QStringLiteral("smoke.content"));
     QCOMPARE(matches.at(0).toObject().value(QStringLiteral("properties")).toObject()

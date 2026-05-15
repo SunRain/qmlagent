@@ -1794,7 +1794,13 @@ private:
             return error->isEmpty();
 
         call->kind = PendingCall::Kind::TargetCommand;
-        return mapToolCall(name, arguments, &call->targetMethod, &call->targetParams, error);
+        const bool mapped = mapToolCall(name, arguments, &call->targetMethod, &call->targetParams,
+                                        error);
+        if (mapped && call->targetMethod == QLatin1String("UI.query")
+                && !arguments.contains(QStringLiteral("verbosity"))) {
+            call->verbosity = QStringLiteral("summary");
+        }
+        return mapped;
     }
 
     static QString workflowPhaseName(WorkflowState::Phase phase)

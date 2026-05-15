@@ -157,7 +157,7 @@ QJsonArray toolList()
                  { QStringLiteral("collapseRepeated"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("boolean") } } },
              })),
         tool(QStringLiteral("qmlagent.ui_query"),
-             QStringLiteral("Query nodes by stable QmlAgent selector. Prefer selector over nodeId across restarts. For repeated delegates, try id/objectName plus index such as id=\"boxRect\" index=0 before adding objectName or using session-local nodeId. Requested properties are returned even when fields is projected. If a single qmlagent-launcher session exists, this routes through the launcher automatically; no direct attach is needed. Use this to find selectors before qmlagent.input_drag, qmlagent.input_wheel, qmlagent.ui_wait_for, or qmlagent.workflow_click_and_wait."),
+             QStringLiteral("Query nodes by stable QmlAgent selector. Defaults to verbosity=\"summary\" to protect agent context; ask for verbosity=\"full\" only when omittedFields/nextHints say deeper node evidence is needed. Prefer selector over nodeId across restarts. For repeated delegates, try id/objectName plus index such as id=\"boxRect\" index=0 before adding objectName or using session-local nodeId. Requested properties are returned even when fields is projected. If a single qmlagent-launcher session exists, this routes through the launcher automatically; no direct attach is needed. Use this to find selectors before qmlagent.input_drag, qmlagent.input_wheel, qmlagent.ui_wait_for, or qmlagent.workflow_click_and_wait."),
              schema({
                  { QStringLiteral("selector"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("string") } } },
                  { QStringLiteral("includeSource"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("boolean") } } },
@@ -166,6 +166,7 @@ QJsonArray toolList()
                  { QStringLiteral("maxNodes"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("integer") } } },
                  { QStringLiteral("verbosity"), QJsonObject{
                      { QStringLiteral("type"), QStringLiteral("string") },
+                     { QStringLiteral("default"), QStringLiteral("summary") },
                      { QStringLiteral("enum"), QJsonArray{
                          QStringLiteral("full"),
                          QStringLiteral("summary"),
