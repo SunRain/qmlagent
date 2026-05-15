@@ -13,7 +13,11 @@
 
 #include <QtCore/qcoreapplication.h>
 #include <QtCore/qjsonarray.h>
+#include <QtCore/qpointer.h>
 #include <QtCore/qset.h>
+#include <QtCore/qsemaphore.h>
+#include <QtCore/qsharedpointer.h>
+#include <QtCore/qstringlist.h>
 #include <QtCore/qthread.h>
 #include <QtCore/quuid.h>
 #include <QtGui/qguiapplication.h>
@@ -23,57 +27,16 @@
 #include <QtQuick/qquickitem.h>
 #include <QtQuick/qquickwindow.h>
 
+#include <utility>
+
 QT_BEGIN_NAMESPACE
 
-template <typename Fn>
-static auto runOnGuiThreadBlocking(Fn &&fn) -> decltype(fn())
+static constexpr int GuiThreadDispatchTimeoutMs = 5000;
+static constexpr int MaxUiWatcherDepth = 256;
+
+static const QStringList &agentMethods()
 {
-    using Result = decltype(fn());
-    QObject *application = QCoreApplication::instance();
-    if (!application || QThread::currentThread() == application->thread())
-        return fn();
-
-    Result result;
-    QMetaObject::invokeMethod(application, [&]() {
-        result = fn();
-    }, Qt::BlockingQueuedConnection);
-    return result;
-}
-
-QQmlAgentService::QQmlAgentService(QObject *parent)
-    : QQmlDebugService(serviceKey(), 1, parent),
-      m_sessionId(QUuid::createUuid().toString(QUuid::WithoutBraces)),
-      m_logs(this)
-{
-    connect(&m_logs, &QQmlAgentLogCollector::entryAdded,
-            this, &QQmlAgentService::sendEntryEvent, Qt::QueuedConnection);
-}
-
-QQmlAgentService::~QQmlAgentService()
-{
-    clearUiWatchers();
-}
-
-QString QQmlAgentService::serviceKey()
-{
-    return QStringLiteral("QmlAgent");
-}
-
-void QQmlAgentService::engineAdded(QJSEngine *engine)
-{
-    m_logs.attachEngine(qobject_cast<QQmlEngine *>(engine));
-}
-
-void QQmlAgentService::messageReceived(const QByteArray &message)
-{
-    const QQmlAgentProtocol::Request request = QQmlAgentProtocol::parseRequest(message);
-    if (!request.valid) {
-        sendProtocolMessage(QQmlAgentProtocol::error(request.id, request.errorCode,
-                                                    request.errorMessage, request.errorData));
-        return;
-    }
-
-    static const QSet<QString> knownMethods{
+    static const QStringList methods{
         QStringLiteral("Session.getInfo"),
         QStringLiteral("Session.configure"),
         QStringLiteral("Session.reset"),
@@ -104,7 +67,161 @@ void QQmlAgentService::messageReceived(const QByteArray &message)
         QStringLiteral("Runtime.invokeMethod"),
         QStringLiteral("Source.resolveNode"),
     };
-    if (!knownMethods.contains(request.method)) {
+    return methods;
+}
+
+static const QSet<QString> &agentMethodSet()
+{
+    static const QSet<QString> methods(agentMethods().cbegin(), agentMethods().cend());
+    return methods;
+}
+
+static bool methodRequiresRuntimeMutation(const QString &method)
+{
+    return method == QLatin1String("Runtime.setProperty")
+            || method == QLatin1String("Runtime.invokeMethod");
+}
+
+static QByteArray boundedResponse(const QJsonValue &id, const QString &method,
+                                  const QJsonObject &result)
+{
+    const QByteArray response = QQmlAgentProtocol::response(id, result);
+    if (response.size() <= QQmlAgentProtocol::MaxOutboundMessageBytes)
+        return response;
+
+    return QQmlAgentProtocol::error(
+            id, -32001, QStringLiteral("QmlAgent response payload is too large"),
+            {
+                { QStringLiteral("method"), method },
+                { QStringLiteral("actualBytes"), response.size() },
+                { QStringLiteral("maxBytes"), QQmlAgentProtocol::MaxOutboundMessageBytes },
+                { QStringLiteral("hints"), QJsonArray{
+                    QStringLiteral("Narrow the selector or use UI.query instead of UI.getTree."),
+                    QStringLiteral("Set depth, maxNodes, fields, properties, includeSource:false, or verbosity:\"summary\" where available."),
+                    QStringLiteral("Request full evidence only after the bounded summary points to a specific follow-up."),
+                } },
+            });
+}
+
+static QJsonObject guiThreadTimeoutResult()
+{
+    return {
+        { QStringLiteral("ok"), false },
+        { QStringLiteral("timedOut"), true },
+        { QStringLiteral("diagnostics"), QJsonArray{ QJsonObject{
+            { QStringLiteral("id"), QStringLiteral("session.gui_thread_timeout") },
+            { QStringLiteral("severity"), QStringLiteral("error") },
+            { QStringLiteral("confidence"), 1.0 },
+            { QStringLiteral("message"),
+              QStringLiteral("Timed out waiting for the GUI thread to run a QmlAgent request.") },
+            { QStringLiteral("timeoutMs"), GuiThreadDispatchTimeoutMs },
+            { QStringLiteral("hints"), QJsonArray{
+                QStringLiteral("The target GUI thread may be blocked in modal work, long JavaScript, rendering, or native code."),
+                QStringLiteral("Check Log.getEntries and target process state; relaunch the target if it is unresponsive."),
+            } },
+        } } },
+    };
+}
+
+static QJsonObject serviceDestroyedResult()
+{
+    return {
+        { QStringLiteral("ok"), false },
+        { QStringLiteral("diagnostics"), QJsonArray{ QJsonObject{
+            { QStringLiteral("id"), QStringLiteral("session.service_destroyed") },
+            { QStringLiteral("severity"), QStringLiteral("error") },
+            { QStringLiteral("confidence"), 1.0 },
+            { QStringLiteral("message"),
+              QStringLiteral("QmlAgent service was destroyed before the queued GUI-thread request could run.") },
+        } } },
+    };
+}
+
+template <typename Fn>
+static QJsonObject runOnGuiThreadBlocking(Fn &&fn)
+{
+    QObject *application = QCoreApplication::instance();
+    if (!application || QThread::currentThread() == application->thread())
+        return fn();
+
+    struct GuiCallState
+    {
+        QSemaphore done;
+        QJsonObject result;
+    };
+
+    const auto state = QSharedPointer<GuiCallState>::create();
+    if (!QMetaObject::invokeMethod(application, [state, fn = std::forward<Fn>(fn)]() mutable {
+            state->result = fn();
+            state->done.release();
+        }, Qt::QueuedConnection)) {
+        QJsonObject result = guiThreadTimeoutResult();
+        result.insert(QStringLiteral("queued"), false);
+        return result;
+    }
+
+    if (!state->done.tryAcquire(1, GuiThreadDispatchTimeoutMs))
+        return guiThreadTimeoutResult();
+
+    return state->result;
+}
+
+QQmlAgentService::QQmlAgentService(QObject *parent)
+    : QQmlDebugService(serviceKey(), 1, parent),
+      m_sessionId(QUuid::createUuid().toString(QUuid::WithoutBraces)),
+      m_logs(this)
+{
+    connect(&m_logs, &QQmlAgentLogCollector::entryAdded,
+            this, &QQmlAgentService::sendEntryEvent, Qt::QueuedConnection);
+}
+
+QQmlAgentService::~QQmlAgentService()
+{
+    clearUiWatchers();
+}
+
+QString QQmlAgentService::serviceKey()
+{
+    return QStringLiteral("QmlAgent");
+}
+
+void QQmlAgentService::stateAboutToBeChanged(QQmlDebugService::State newState)
+{
+    if (newState == QQmlDebugService::Enabled)
+        return;
+
+    resetSessionState(QStringLiteral("debug-service-state-changed"));
+}
+
+void QQmlAgentService::resetSessionState(const QString &reason)
+{
+    m_uiSubscribed.store(false);
+    m_uiEventPending.store(false);
+    m_uiWatcherRefreshPending.store(false);
+    m_runtimeMutationEnabled = false;
+    clearUiWatchers();
+    m_logs.reset();
+    sendProtocolMessage(QQmlAgentProtocol::event(QStringLiteral("Session.reset"), {
+        { QStringLiteral("reason"), reason },
+        { QStringLiteral("subscriptionsInvalidated"), true },
+    }));
+}
+
+void QQmlAgentService::engineAdded(QJSEngine *engine)
+{
+    m_logs.attachEngine(qobject_cast<QQmlEngine *>(engine));
+}
+
+void QQmlAgentService::messageReceived(const QByteArray &message)
+{
+    const QQmlAgentProtocol::Request request = QQmlAgentProtocol::parseRequest(message);
+    if (!request.valid) {
+        sendProtocolMessage(QQmlAgentProtocol::error(request.id, request.errorCode,
+                                                    request.errorMessage, request.errorData));
+        return;
+    }
+
+    if (!agentMethodSet().contains(request.method)) {
         sendProtocolMessage(QQmlAgentProtocol::error(request.id, -32601,
                                                     QStringLiteral("Method not found")));
         return;
@@ -112,11 +229,23 @@ void QQmlAgentService::messageReceived(const QByteArray &message)
 
     const QJsonObject result = dispatch(request.method, request.params);
     if (!request.id.isUndefined())
-        sendProtocolMessage(QQmlAgentProtocol::response(request.id, result));
+        sendProtocolMessage(boundedResponse(request.id, request.method, result));
 }
 
 void QQmlAgentService::sendProtocolMessage(const QByteArray &message)
 {
+    if (message.size() > QQmlAgentProtocol::MaxOutboundMessageBytes) {
+        emit messageToClient(name(), QQmlAgentProtocol::event(
+                QStringLiteral("Session.payloadDropped"),
+                {
+                    { QStringLiteral("actualBytes"), message.size() },
+                    { QStringLiteral("maxBytes"), QQmlAgentProtocol::MaxOutboundMessageBytes },
+                    { QStringLiteral("hint"),
+                      QStringLiteral("Use projection, selectors, maxNodes, summary verbosity, or smaller screenshot scale/region.") },
+                }));
+        return;
+    }
+
     emit messageToClient(name(), message);
 }
 
@@ -128,15 +257,21 @@ void QQmlAgentService::sendEntryEvent(const QJsonObject &entry)
 
 QJsonObject QQmlAgentService::dispatch(const QString &method, const QJsonObject &params)
 {
+    const QPointer<QQmlAgentService> self(this);
+
     if (method == QLatin1String("Session.getInfo"))
         return sessionInfo();
     if (method == QLatin1String("Session.configure"))
         return sessionConfigure(params);
 
     if (method == QLatin1String("Session.reset")) {
-        m_logs.reset();
-        m_runtimeMutationEnabled = false;
-        return { { QStringLiteral("reset"), true } };
+        const QString reason = params.value(QStringLiteral("reason")).toString(QStringLiteral("client-request"));
+        resetSessionState(reason);
+        return {
+            { QStringLiteral("reset"), true },
+            { QStringLiteral("reason"), reason },
+            { QStringLiteral("subscriptionsInvalidated"), true },
+        };
     }
 
     if (method == QLatin1String("Log.enable"))
@@ -147,60 +282,65 @@ QJsonObject QQmlAgentService::dispatch(const QString &method, const QJsonObject 
         return m_logs.clear();
 
     if (method == QLatin1String("UI.getTree"))
-        return runOnGuiThreadBlocking([&]() { return QQmlAgentUiTree::getTree(params); });
+        return runOnGuiThreadBlocking([params]() { return QQmlAgentUiTree::getTree(params); });
     if (method == QLatin1String("UI.query"))
-        return runOnGuiThreadBlocking([&]() { return QQmlAgentUiTree::query(params); });
+        return runOnGuiThreadBlocking([params]() { return QQmlAgentUiTree::query(params); });
     if (method == QLatin1String("UI.waitFor"))
-        return runOnGuiThreadBlocking([&]() { return QQmlAgentUiTree::waitFor(params); });
+        return runOnGuiThreadBlocking([params]() { return QQmlAgentUiTree::waitFor(params); });
     if (method == QLatin1String("UI.describeNode"))
-        return runOnGuiThreadBlocking([&]() { return QQmlAgentUiTree::describeNode(params); });
+        return runOnGuiThreadBlocking([params]() { return QQmlAgentUiTree::describeNode(params); });
     if (method == QLatin1String("UI.getBoxModel"))
-        return runOnGuiThreadBlocking([&]() { return QQmlAgentUiTree::getBoxModel(params); });
+        return runOnGuiThreadBlocking([params]() { return QQmlAgentUiTree::getBoxModel(params); });
     if (method == QLatin1String("UI.subscribe"))
-        return runOnGuiThreadBlocking([&]() { return subscribeUi(params); });
+        return runOnGuiThreadBlocking([self, params]() {
+            return self ? self->subscribeUi(params) : serviceDestroyedResult();
+        });
     if (method == QLatin1String("UI.unsubscribe"))
-        return runOnGuiThreadBlocking([&]() { return unsubscribeUi(); });
+        return runOnGuiThreadBlocking([self]() {
+            return self ? self->unsubscribeUi() : serviceDestroyedResult();
+        });
     if (method == QLatin1String("Diagnostics.analyzeNode"))
-        return runOnGuiThreadBlocking([&]() { return QQmlAgentDiagnostics::analyzeNode(params); });
+        return runOnGuiThreadBlocking([params]() { return QQmlAgentDiagnostics::analyzeNode(params); });
     if (method == QLatin1String("Diagnostics.analyzeBinding"))
-        return runOnGuiThreadBlocking([&]() { return QQmlAgentDiagnostics::analyzeBinding(params); });
+        return runOnGuiThreadBlocking([params]() { return QQmlAgentDiagnostics::analyzeBinding(params); });
     if (method == QLatin1String("Diagnostics.analyzeTree")) {
-        return runOnGuiThreadBlocking([&]() {
-            return QQmlAgentDiagnostics::analyzeTree(params, &m_logs);
+        return runOnGuiThreadBlocking([self, params]() {
+            return self ? QQmlAgentDiagnostics::analyzeTree(params, &self->m_logs)
+                        : serviceDestroyedResult();
         });
     }
     if (method == QLatin1String("Input.clickNode"))
-        return runOnGuiThreadBlocking([&]() { return QQmlAgentInput::clickNode(params); });
+        return runOnGuiThreadBlocking([params]() { return QQmlAgentInput::clickNode(params); });
     if (method == QLatin1String("Input.longPressNode"))
-        return runOnGuiThreadBlocking([&]() { return QQmlAgentInput::longPressNode(params); });
+        return runOnGuiThreadBlocking([params]() { return QQmlAgentInput::longPressNode(params); });
     if (method == QLatin1String("Input.wheel"))
-        return runOnGuiThreadBlocking([&]() { return QQmlAgentInput::wheel(params); });
+        return runOnGuiThreadBlocking([params]() { return QQmlAgentInput::wheel(params); });
     if (method == QLatin1String("Input.focusNode"))
-        return runOnGuiThreadBlocking([&]() { return QQmlAgentInput::focusNode(params); });
+        return runOnGuiThreadBlocking([params]() { return QQmlAgentInput::focusNode(params); });
     if (method == QLatin1String("Input.dispatchMouseEvent"))
-        return runOnGuiThreadBlocking([&]() { return QQmlAgentInput::dispatchMouseEvent(params); });
+        return runOnGuiThreadBlocking([params]() { return QQmlAgentInput::dispatchMouseEvent(params); });
     if (method == QLatin1String("Input.dragNode"))
-        return runOnGuiThreadBlocking([&]() { return QQmlAgentInput::dragNode(params); });
+        return runOnGuiThreadBlocking([params]() { return QQmlAgentInput::dragNode(params); });
     if (method == QLatin1String("Input.dispatchTouchEvent"))
-        return runOnGuiThreadBlocking([&]() { return QQmlAgentInput::dispatchTouchEvent(params); });
+        return runOnGuiThreadBlocking([params]() { return QQmlAgentInput::dispatchTouchEvent(params); });
     if (method == QLatin1String("Input.dispatchKeyEvent"))
-        return runOnGuiThreadBlocking([&]() { return QQmlAgentInput::dispatchKeyEvent(params); });
+        return runOnGuiThreadBlocking([params]() { return QQmlAgentInput::dispatchKeyEvent(params); });
     if (method == QLatin1String("Input.typeText"))
-        return runOnGuiThreadBlocking([&]() { return QQmlAgentInput::typeText(params); });
+        return runOnGuiThreadBlocking([params]() { return QQmlAgentInput::typeText(params); });
     if (method == QLatin1String("Render.captureScreenshot"))
-        return runOnGuiThreadBlocking([&]() { return QQmlAgentRender::captureScreenshot(params); });
+        return runOnGuiThreadBlocking([params]() { return QQmlAgentRender::captureScreenshot(params); });
     if (method == QLatin1String("Runtime.setProperty")) {
         if (!m_runtimeMutationEnabled)
             return runtimeMutationDisabledResult();
-        return runOnGuiThreadBlocking([&]() { return QQmlAgentRuntime::setProperty(params); });
+        return runOnGuiThreadBlocking([params]() { return QQmlAgentRuntime::setProperty(params); });
     }
     if (method == QLatin1String("Runtime.invokeMethod")) {
         if (!m_runtimeMutationEnabled)
             return runtimeMutationDisabledResult();
-        return runOnGuiThreadBlocking([&]() { return QQmlAgentRuntime::invokeMethod(params); });
+        return runOnGuiThreadBlocking([params]() { return QQmlAgentRuntime::invokeMethod(params); });
     }
     if (method == QLatin1String("Source.resolveNode")) {
-        return runOnGuiThreadBlocking([&]() {
+        return runOnGuiThreadBlocking([params]() {
             const QQmlAgentUiTree::NodeRef ref = QQmlAgentUiTree::resolveNodeRef(params);
             const QJsonObject location = QQmlAgentSourceResolver::sourceLocationForObject(ref.object);
             QJsonObject result{
@@ -221,37 +361,11 @@ QJsonObject QQmlAgentService::dispatch(const QString &method, const QJsonObject 
 
 QJsonObject QQmlAgentService::sessionInfo() const
 {
-    QJsonArray features{
-        QStringLiteral("Session.getInfo"),
-        QStringLiteral("Session.configure"),
-        QStringLiteral("Session.reset"),
-        QStringLiteral("UI.getTree"),
-        QStringLiteral("UI.query"),
-        QStringLiteral("UI.waitFor"),
-        QStringLiteral("UI.describeNode"),
-        QStringLiteral("UI.getBoxModel"),
-        QStringLiteral("UI.subscribe"),
-        QStringLiteral("UI.unsubscribe"),
-        QStringLiteral("Input.clickNode"),
-        QStringLiteral("Input.wheel"),
-        QStringLiteral("Input.focusNode"),
-        QStringLiteral("Input.dispatchMouseEvent"),
-        QStringLiteral("Input.dragNode"),
-        QStringLiteral("Input.dispatchTouchEvent"),
-        QStringLiteral("Input.dispatchKeyEvent"),
-        QStringLiteral("Input.typeText"),
-        QStringLiteral("Render.captureScreenshot"),
-        QStringLiteral("Log.enable"),
-        QStringLiteral("Log.getEntries"),
-        QStringLiteral("Log.clear"),
-        QStringLiteral("Diagnostics.analyzeNode"),
-        QStringLiteral("Diagnostics.analyzeTree"),
-        QStringLiteral("Diagnostics.analyzeBinding"),
-        QStringLiteral("Source.resolveNode"),
-    };
-    if (m_runtimeMutationEnabled) {
-        features.append(QStringLiteral("Runtime.setProperty"));
-        features.append(QStringLiteral("Runtime.invokeMethod"));
+    QJsonArray features;
+    for (const QString &method : agentMethods()) {
+        if (methodRequiresRuntimeMutation(method) && !m_runtimeMutationEnabled)
+            continue;
+        features.append(method);
     }
 
     return {
@@ -270,6 +384,12 @@ QJsonObject QQmlAgentService::sessionInfo() const
             { QStringLiteral("renderScreenshot"), QJsonObject{
                 { QStringLiteral("enabled"), true },
                 { QStringLiteral("evidenceRole"), QStringLiteral("fallback-supporting") },
+            } },
+            { QStringLiteral("payloadLimits"), QJsonObject{
+                { QStringLiteral("maxInboundMessageBytes"), QQmlAgentProtocol::MaxInboundMessageBytes },
+                { QStringLiteral("maxOutboundMessageBytes"), QQmlAgentProtocol::MaxOutboundMessageBytes },
+                { QStringLiteral("overflowBehavior"),
+                  QStringLiteral("oversized requests return JSON-RPC errors; oversized responses return a bounded JSON-RPC error with follow-up hints") },
             } },
         } },
     };
@@ -359,10 +479,14 @@ void QQmlAgentService::clearUiWatchers()
     m_uiConnections.clear();
 }
 
-void QQmlAgentService::watchUiObject(QObject *object, QSet<QObject *> *seen)
+void QQmlAgentService::watchUiObject(QObject *object, QSet<QObject *> *seen, int depth)
 {
     if (!object || seen->contains(object))
         return;
+    if (depth > MaxUiWatcherDepth) {
+        scheduleUiChangedEvent(QStringLiteral("watcher-depth-limit"));
+        return;
+    }
 
     seen->insert(object);
     m_uiConnections.append(connect(object, &QObject::objectNameChanged, this,
@@ -393,7 +517,7 @@ void QQmlAgentService::watchUiObject(QObject *object, QSet<QObject *> *seen)
     }));
 
     for (QQuickItem *child : item->childItems())
-        watchUiObject(child, seen);
+        watchUiObject(child, seen, depth + 1);
 }
 
 void QQmlAgentService::scheduleUiWatcherRefresh()

@@ -56,6 +56,18 @@ static QJsonObject issue(const QString &id, const QString &severity, double conf
     return object;
 }
 
+static QJsonObject evidenceProfile(const QString &kind, const QString &basis,
+                                   const QJsonArray &limitations = {})
+{
+    QJsonObject object{
+        { QStringLiteral("kind"), kind },
+        { QStringLiteral("basis"), basis },
+    };
+    if (!limitations.isEmpty())
+        object.insert(QStringLiteral("limitations"), limitations);
+    return object;
+}
+
 static QJsonObject repairHint(const QString &kind, double confidence, const QString &reason,
                               const QJsonObject &details = {})
 {
@@ -429,9 +441,17 @@ static QJsonObject overlapIssueForNode(const QString &message, int nodeId,
         evidence.append(value);
 
     QJsonObject overlapIssue = issue(
-            QStringLiteral("layout.overlap"), QStringLiteral("warning"), 0.85,
+            QStringLiteral("layout.overlap"), QStringLiteral("warning"), 0.60,
             nodeId, message, evidence, source);
     overlapIssue.insert(QStringLiteral("bbox"), rectArray(bbox));
+    overlapIssue.insert(QStringLiteral("evidenceProfile"),
+                        evidenceProfile(QStringLiteral("center-point-hit-test"),
+                                        QStringLiteral("paint-order hit test at target center"),
+                                        {
+                                            QStringLiteral("does not prove full-area occlusion"),
+                                            QStringLiteral("does not detect edge-only or transparent blockers"),
+                                            QStringLiteral("blame direction is approximate"),
+                                        }));
     if (!targetNode.isEmpty())
         overlapIssue.insert(QStringLiteral("target"), targetNode);
     overlapIssue.insert(QStringLiteral("actionability"), QJsonObject{
@@ -1022,6 +1042,14 @@ QJsonObject QQmlAgentDiagnostics::analyzeNode(const QJsonObject &params)
                     QStringLiteral("input.not_actionable"), QStringLiteral("error"), 1.0,
                     nodeId, QStringLiteral("Node is not currently actionable."),
                     evidence, source);
+            actionableIssue.insert(QStringLiteral("evidenceProfile"),
+                                   evidenceProfile(QStringLiteral("actionability-reasons"),
+                                                   QStringLiteral("computed visibility, enabled, viewport, hit-test, and modal-blocking checks"),
+                                                   {
+                                                       QStringLiteral("not proof that the target has a semantic input handler"),
+                                                       QStringLiteral("generic blocker detection uses center-point paint-order evidence"),
+                                                       QStringLiteral("modal popup evidence depends on visible Qt Quick overlay state"),
+                                                   }));
             actionableIssue.insert(QStringLiteral("actionability"), QJsonObject{
                 { QStringLiteral("ok"), false },
                 { QStringLiteral("reasons"), reasons },
@@ -1086,9 +1114,16 @@ QJsonObject QQmlAgentDiagnostics::analyzeNode(const QJsonObject &params)
     const bool runVisibleCheck = checkRequested(checks, QStringLiteral("visible")) || clickableCheck;
     if (runVisibleCheck && !item->isVisible()) {
         QJsonObject invisibleIssue =
-                issue(QStringLiteral("layout.invisible_ancestor"), QStringLiteral("error"), 0.9,
+                issue(QStringLiteral("layout.invisible_ancestor"), QStringLiteral("error"), 0.90,
                       nodeId, QStringLiteral("Node is not visible."),
                       { QStringLiteral("visible=false") }, source);
+        invisibleIssue.insert(QStringLiteral("evidenceProfile"),
+                              evidenceProfile(QStringLiteral("quick-item-visibility"),
+                                              QStringLiteral("QQuickItem::isVisible() effective visibility"),
+                                              {
+                                                  QStringLiteral("does not identify every ancestor that contributed to effective visibility"),
+                                                  QStringLiteral("visibility can change after bindings or state transitions reevaluate"),
+                                              }));
         attachBindingProvenance(&invisibleIssue, object, { QStringLiteral("visible") });
         issues.append(invisibleIssue);
     }
@@ -1096,9 +1131,16 @@ QJsonObject QQmlAgentDiagnostics::analyzeNode(const QJsonObject &params)
     if ((checks.isEmpty() || checkExplicitlyRequested(checks, QStringLiteral("opacity")))
         && item->opacity() <= 0.01) {
         QJsonObject opacityIssue =
-                issue(QStringLiteral("layout.opacity_zero"), QStringLiteral("error"), 0.95,
+                issue(QStringLiteral("layout.opacity_zero"), QStringLiteral("error"), 0.90,
                       nodeId, QStringLiteral("Node has near-zero opacity."),
                       { QStringLiteral("opacity=%1").arg(item->opacity()) }, source);
+        opacityIssue.insert(QStringLiteral("evidenceProfile"),
+                            evidenceProfile(QStringLiteral("quick-item-opacity-threshold"),
+                                            QStringLiteral("QQuickItem::opacity() <= 0.01"),
+                                            {
+                                                QStringLiteral("threshold is an interaction heuristic, not proof of visual invisibility in every shader/effect path"),
+                                                QStringLiteral("does not include inherited effective opacity from every ancestor"),
+                                            }));
         attachBindingProvenance(&opacityIssue, object, { QStringLiteral("opacity") });
         issues.append(opacityIssue);
     }
@@ -1152,13 +1194,21 @@ QJsonObject QQmlAgentDiagnostics::analyzeNode(const QJsonObject &params)
     const bool runMinSizeCheck = checkRequested(checks, QStringLiteral("minSize")) || clickableCheck;
     if (runMinSizeCheck && (item->width() <= 0.5 || item->height() <= 0.5)) {
         QJsonObject zeroSizeIssue =
-                issue(QStringLiteral("layout.zero_size"), QStringLiteral("error"), 1.0, nodeId,
+                issue(QStringLiteral("layout.zero_size"), QStringLiteral("error"), 0.90, nodeId,
                       QStringLiteral("Node has zero or near-zero size."),
                       { QStringLiteral("width=%1").arg(item->width()),
                         QStringLiteral("height=%1").arg(item->height()),
                         QStringLiteral("implicitWidth=%1").arg(item->implicitWidth()),
-                        QStringLiteral("implicitHeight=%1").arg(item->implicitHeight()) },
+                        QStringLiteral("implicitHeight=%1").arg(item->implicitHeight()),
+                        QStringLiteral("zeroSizeThresholdLogicalPx=0.5") },
                       source);
+        zeroSizeIssue.insert(QStringLiteral("evidenceProfile"),
+                             evidenceProfile(QStringLiteral("logical-size-threshold"),
+                                             QStringLiteral("width/height logical pixel threshold"),
+                                             {
+                                                 QStringLiteral("threshold is an actionability heuristic, not a semantic layout proof"),
+                                                 QStringLiteral("device pixel ratio and transforms can affect rendered result"),
+                                             }));
         attachBindingProvenance(&zeroSizeIssue, object, { QStringLiteral("width"),
                                                           QStringLiteral("height") });
         issues.append(zeroSizeIssue);
@@ -1175,6 +1225,8 @@ QJsonObject QQmlAgentDiagnostics::analyzeNode(const QJsonObject &params)
             QJsonArray evidence{
                 QStringLiteral("bbox=[%1,%2,%3,%4]").arg(bbox.x()).arg(bbox.y()).arg(bbox.width()).arg(bbox.height()),
                 QStringLiteral("viewport=[0,0,%1,%2]").arg(viewport.width()).arg(viewport.height()),
+                QStringLiteral("coordinateSpace=window logical pixels"),
+                QStringLiteral("devicePixelRatio=%1").arg(item->window()->devicePixelRatio()),
             };
             if (bbox.right() > viewport.right())
                 evidence.append(QStringLiteral("right=%1 exceeds viewport width=%2").arg(bbox.right()).arg(viewport.right()));
@@ -1186,11 +1238,18 @@ QJsonObject QQmlAgentDiagnostics::analyzeNode(const QJsonObject &params)
                 evidence.append(QStringLiteral("top=%1 is before viewport top=%2").arg(bbox.top()).arg(viewport.top()));
 
             QJsonObject outside = issue(QStringLiteral("layout.outside_viewport"), QStringLiteral("error"),
-                                        1.0, nodeId,
+                                        0.90, nodeId,
                                         QStringLiteral("Visible item is not fully inside the viewport."),
                                         evidence, source);
             outside.insert(QStringLiteral("bbox"), rectArray(bbox));
             outside.insert(QStringLiteral("viewport"), rectArray(viewport));
+            outside.insert(QStringLiteral("evidenceProfile"),
+                           evidenceProfile(QStringLiteral("window-logical-geometry"),
+                                           QStringLiteral("item scene bbox compared with QQuickWindow logical size"),
+                                           {
+                                               QStringLiteral("uses logical coordinates, not physical pixels"),
+                                               QStringLiteral("does not account for platform window decorations or native clipping outside QQuickWindow"),
+                                           }));
             outside.insert(QStringLiteral("blameChain"), viewportBlameChain(item, viewport));
             outside.insert(QStringLiteral("patchDirection"),
                            QStringLiteral("Reduce fixed spacing, wrap content in ScrollView, use Layout.fillHeight, or anchor action buttons separately."));
@@ -1236,9 +1295,16 @@ QJsonObject QQmlAgentDiagnostics::analyzeNode(const QJsonObject &params)
                 evidence.append(QStringLiteral("top=%1 is before parent top=%2").arg(bbox.top()).arg(parentBox.top()));
 
             QJsonObject childExceeds = issue(
-                    QStringLiteral("layout.child_exceeds_parent"), QStringLiteral("error"), 0.95,
+                    QStringLiteral("layout.child_exceeds_parent"), QStringLiteral("error"), 0.90,
                     nodeId, QStringLiteral("Child item exceeds a clipping parent item."),
                     evidence, source);
+            childExceeds.insert(QStringLiteral("evidenceProfile"),
+                                evidenceProfile(QStringLiteral("clipping-parent-geometry"),
+                                                QStringLiteral("child scene bbox compared with clipping parent scene bbox"),
+                                                {
+                                                    QStringLiteral("uses axis-aligned logical geometry"),
+                                                    QStringLiteral("does not fully model transforms, shader effects, or nested clip intersections"),
+                                                }));
             childExceeds.insert(QStringLiteral("parentNodeId"),
                                 QQmlAgentUiTree::nodeForObject(parentItem, 0, 0, true, false, {})
                                         .value(QStringLiteral("nodeId")).toInt(-1));

@@ -14,6 +14,7 @@
 QT_BEGIN_NAMESPACE
 
 QQmlAgentLogCollector *QQmlAgentLogCollector::s_activeCollector = nullptr;
+QMutex QQmlAgentLogCollector::s_handlerMutex;
 
 static QString levelName(QtMsgType type)
 {
@@ -45,7 +46,7 @@ QQmlAgentLogCollector::~QQmlAgentLogCollector()
 
 void QQmlAgentLogCollector::installMessageHandler()
 {
-    QMutexLocker locker(&m_mutex);
+    QMutexLocker locker(&s_handlerMutex);
     if (!s_activeCollector) {
         s_activeCollector = this;
         m_previousHandler = qInstallMessageHandler(QQmlAgentLogCollector::messageHandler);
@@ -54,7 +55,7 @@ void QQmlAgentLogCollector::installMessageHandler()
 
 void QQmlAgentLogCollector::restoreMessageHandler()
 {
-    QMutexLocker locker(&m_mutex);
+    QMutexLocker locker(&s_handlerMutex);
     if (s_activeCollector != this)
         return;
 
@@ -210,11 +211,15 @@ void QQmlAgentLogCollector::reset()
 void QQmlAgentLogCollector::messageHandler(
         QtMsgType type, const QMessageLogContext &context, const QString &message)
 {
-    QQmlAgentLogCollector *collector = s_activeCollector;
     QtMessageHandler previous = nullptr;
-    if (collector) {
-        previous = collector->m_previousHandler;
-        collector->captureMessage(type, context, message);
+
+    {
+        QMutexLocker locker(&s_handlerMutex);
+        QQmlAgentLogCollector *collector = s_activeCollector;
+        if (collector) {
+            previous = collector->m_previousHandler;
+            collector->captureMessage(type, context, message);
+        }
     }
 
     if (previous)

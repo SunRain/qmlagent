@@ -14,6 +14,7 @@
 QT_BEGIN_NAMESPACE
 
 class QElapsedTimer;
+class QObject;
 class QQuickWindow;
 
 class QQmlAgentInputDriver
@@ -36,6 +37,9 @@ public:
                       const QPoint &angleDelta, Qt::KeyboardModifiers modifiers);
     static void key(QQuickWindow *window, QEvent::Type type, int key,
                     Qt::KeyboardModifiers modifiers, const QString &text);
+    static void key(QObject *target, QEvent::Type type, int key,
+                    Qt::KeyboardModifiers modifiers, const QString &text);
+    static void inputText(QObject *target, const QString &text);
     static void touch(QQuickWindow *window, QEvent::Type type, const QList<TouchPoint> &points,
                       Qt::KeyboardModifiers modifiers);
 };

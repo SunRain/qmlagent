@@ -93,7 +93,7 @@ static QJsonArray typeAliases(QObject *object, const QString &primaryType)
     QJsonArray aliases;
     QSet<QString> seen{ primaryType };
     const QMetaObject *metaObject = object ? object->metaObject() : nullptr;
-    while (metaObject) {
+    if (metaObject) {
         QString className = QString::fromUtf8(metaObject->className());
         const int qmlTypeMarker = className.indexOf(QLatin1String("_QML"));
         if (qmlTypeMarker > 0)
@@ -113,8 +113,6 @@ static QJsonArray typeAliases(QObject *object, const QString &primaryType)
         appendAlias(className);
         if (className.startsWith(QLatin1String("QQuick")) && className.size() > 6)
             appendAlias(className.mid(6));
-
-        metaObject = metaObject->superClass();
     }
     return aliases;
 }
@@ -457,8 +455,7 @@ static bool hasTableLikeViewAncestor(QObject *object)
 
 static bool delegateIndexSourceSupportsSelector(const QString &indexSource)
 {
-    return indexSource == QLatin1String("modelIndex")
-            || indexSource == QLatin1String("creationOrder");
+    return indexSource == QLatin1String("modelIndex");
 }
 
 static bool delegateCellSourceSupportsSelector(const QString &cellSource)
@@ -538,8 +535,6 @@ static QJsonObject withDelegateMetadata(QJsonObject node, QObject *object, int d
         source = QQmlAgentSourceResolver::sourceLocationForObject(object);
     const bool sourceLooksLikeDelegate = source.value(QStringLiteral("method")).toString()
             == QLatin1String("qqmldata-delegate");
-    if (!sourceLooksLikeDelegate)
-        return node;
 
     const int row = readableDelegateRow(object);
     const int column = readableDelegateColumn(object);
@@ -549,6 +544,10 @@ static QJsonObject withDelegateMetadata(QJsonObject node, QObject *object, int d
     const int modelIndex = readableDelegateModelIndex(object);
     if (modelIndex >= 0)
         return applyDelegateContext(node, modelIndex, QStringLiteral("modelIndex"));
+
+    if (!sourceLooksLikeDelegate)
+        return node;
+
     if (!hasVirtualizedViewAncestor(object))
         return applyDelegateContext(node, delegateIndex, QStringLiteral("creationOrder"));
     return applyDelegateContext(node, delegateIndex, QStringLiteral("visualOrder"));
@@ -913,7 +912,14 @@ QJsonObject QQmlAgentUiTree::getTree(const QJsonObject &params)
 
 QObject *QQmlAgentUiTree::objectForNodeId(int nodeId)
 {
-    return QQmlDebugService::objectForId(nodeId);
+    QObject *object = QQmlDebugService::objectForId(nodeId);
+    if (!object)
+        return nullptr;
+
+    if (QQmlDebugService::idForObject(object) != nodeId)
+        return nullptr;
+
+    return object;
 }
 
 static QJsonObject nodeRefIssue(const QString &id, const QString &message)
@@ -937,11 +943,11 @@ static bool nodeMatchesSelector(const QJsonObject &node, const QString &kind, co
     if (kind == QLatin1String("text"))
         return node.value(QStringLiteral("text")).toString() == value;
     if (kind == QLatin1String("type")) {
-        if (node.value(QStringLiteral("type")).toString().contains(value))
+        if (node.value(QStringLiteral("type")).toString() == value)
             return true;
         const QJsonArray aliases = node.value(QStringLiteral("typeAliases")).toArray();
         for (const QJsonValue &alias : aliases) {
-            if (alias.toString().contains(value))
+            if (alias.toString() == value)
                 return true;
         }
         return false;
@@ -1903,8 +1909,14 @@ QQmlAgentUiTree::NodeRef QQmlAgentUiTree::resolveNodeRef(const QJsonObject &para
     if (hasNodeId) {
         ref.nodeId = params.value(QStringLiteral("nodeId")).toInt(-1);
         ref.object = objectForNodeId(ref.nodeId);
-        if (ref.object)
+        if (ref.object) {
             ref.node = describeNode({ { QStringLiteral("nodeId"), ref.nodeId } }).value(QStringLiteral("node")).toObject();
+        } else {
+            ref.failureReason = QStringLiteral("node_not_found");
+            ref.issues.append(nodeRefIssue(
+                    QStringLiteral("noderef.node_not_found"),
+                    QStringLiteral("nodeId does not resolve to a live QML object.")));
+        }
         return ref;
     }
 
@@ -1925,6 +1937,12 @@ QQmlAgentUiTree::NodeRef QQmlAgentUiTree::resolveNodeRef(const QJsonObject &para
     ref.node = matches.first().toObject();
     ref.nodeId = ref.node.value(QStringLiteral("nodeId")).toInt(-1);
     ref.object = objectForNodeId(ref.nodeId);
+    if (!ref.object) {
+        ref.failureReason = QStringLiteral("node_not_live");
+        ref.issues.append(nodeRefIssue(
+                QStringLiteral("noderef.node_not_live"),
+                QStringLiteral("Selector matched a node snapshot, but the runtime object is no longer live.")));
+    }
     return ref;
 }
 

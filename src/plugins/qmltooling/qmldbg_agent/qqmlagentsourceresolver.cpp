@@ -663,13 +663,24 @@ struct SourceMethod
     QJsonArray limitations;
 };
 
+static QJsonArray directSourceLimitations()
+{
+    return {
+        QStringLiteral("confidence reflects QQmlData source metadata for the live object"),
+        QStringLiteral("does not prove the object was not moved, reparented, or mutated after creation"),
+    };
+}
+
 static SourceMethod classifySourceMethod(const QObject *object, const QQmlData *data)
 {
     if (hasLoaderAncestor(object)) {
         return {
             QStringLiteral("qqmldata-loaded"),
-            0.85,
-            { QStringLiteral("location is in loaded component, not necessarily Loader caller") },
+            0.80,
+            {
+                QStringLiteral("location is in loaded component, not necessarily Loader caller"),
+                QStringLiteral("does not prove Loader source or active item was not changed after creation"),
+            },
         };
     }
 
@@ -677,12 +688,15 @@ static SourceMethod classifySourceMethod(const QObject *object, const QQmlData *
         return {
             QStringLiteral("qqmldata-delegate"),
             0.75,
-            { QStringLiteral("location is delegate template, not model row instance") },
+            {
+                QStringLiteral("location is delegate template, not model row instance"),
+                QStringLiteral("delegate instances may be recycled by views"),
+            },
         };
     }
 
     if (hasAuthorContextId(object, data))
-        return { QStringLiteral("qqmldata-direct"), 0.95, {} };
+        return { QStringLiteral("qqmldata-direct"), 0.90, directSourceLimitations() };
 
     if (hasDynamicComponentRoot(object)) {
         return {
@@ -693,7 +707,7 @@ static SourceMethod classifySourceMethod(const QObject *object, const QQmlData *
         };
     }
 
-    return { QStringLiteral("qqmldata-direct"), 0.95, {} };
+    return { QStringLiteral("qqmldata-direct"), 0.85, directSourceLimitations() };
 }
 
 QJsonObject QQmlAgentSourceResolver::unknownLocation(const QString &method)
@@ -783,7 +797,7 @@ QJsonObject QQmlAgentSourceResolver::bindingProvenanceForProperty(QObject *objec
     if (!binding && !qpropertyBinding) {
         provenance.insert(QStringLiteral("kind"), QStringLiteral("runtimeValue"));
         provenance.insert(QStringLiteral("isBinding"), false);
-        provenance.insert(QStringLiteral("confidence"), 0.80);
+        provenance.insert(QStringLiteral("confidence"), 0.60);
         provenance.insert(QStringLiteral("limitations"), QJsonArray{
             QStringLiteral("no active QQmlAbstractBinding is installed for this property"),
             QStringLiteral("runtime metadata cannot distinguish original literal assignment from imperative writes or a removed binding"),
@@ -814,10 +828,12 @@ QJsonObject QQmlAgentSourceResolver::bindingProvenanceForProperty(QObject *objec
                       binding ? bindingKindName(binding->kind())
                               : QStringLiteral("qpropertyBinding"));
     provenance.insert(QStringLiteral("sourceLocation"), bindingLocation);
-    provenance.insert(QStringLiteral("confidence"), (qmlBinding || qpropertyBinding) ? 0.95 : 0.75);
+    provenance.insert(QStringLiteral("confidence"), qmlBinding ? 0.85
+                                                               : (qpropertyBinding ? 0.65 : 0.70));
     QJsonArray limitations{
         QStringLiteral("binding metadata is read from QQmlAbstractBinding private API"),
         QStringLiteral("expression text is reported as a bounded source snippet when available, not a parsed QML AST"),
+        QStringLiteral("runtime dependency capture can under-report unevaluated branches and lazy paths"),
     };
     if (qpropertyBinding) {
         limitations.replace(0, QStringLiteral("binding metadata is read from Qt bindable-property private API"));

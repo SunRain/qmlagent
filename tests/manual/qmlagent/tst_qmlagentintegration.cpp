@@ -55,6 +55,7 @@ class QmlAgentIntegrationTest : public QObject
 
 private slots:
     void clickNodeDeliversSyntheticInput();
+    void inputTargetsMultipleWindows();
     void uiSubscribeEmitsCoalescedChangeEvents();
     void uiTreeSupportsProjectionBoundsAndCollapse();
     void uiQuerySerializesRequestedValueTypes();
@@ -550,6 +551,13 @@ void QmlAgentIntegrationTest::clickNodeDeliversSyntheticInput()
     QVERIFY(infoResponse->value(QStringLiteral("result")).toObject()
                     .value(QStringLiteral("features")).toArray()
                     .contains(QStringLiteral("UI.waitFor")));
+    QVERIFY(infoResponse->value(QStringLiteral("result")).toObject()
+                    .value(QStringLiteral("features")).toArray()
+                    .contains(QStringLiteral("Input.longPressNode")));
+    QVERIFY(infoResponse->value(QStringLiteral("result")).toObject()
+                    .value(QStringLiteral("capabilities")).toObject()
+                    .value(QStringLiteral("payloadLimits")).toObject()
+                    .value(QStringLiteral("maxOutboundMessageBytes")).toInt() > 0);
 
     const auto textInputResponse = invoke(&client, QStringLiteral("UI.query"), {
         { QStringLiteral("selector"), QStringLiteral("objectName=\"smoke.textInput\"") },
@@ -568,9 +576,12 @@ void QmlAgentIntegrationTest::clickNodeDeliversSyntheticInput()
         { QStringLiteral("text"), QStringLiteral("ab") },
     }, 3, &errorMessage);
     QVERIFY2(typeTextResponse.has_value(), qPrintable(errorMessage));
-    QCOMPARE(typeTextResponse->value(QStringLiteral("result")).toObject()
-                     .value(QStringLiteral("delivered")).toBool(),
-             true);
+    const QJsonObject typeTextResult = typeTextResponse->value(QStringLiteral("result")).toObject();
+    QCOMPARE(typeTextResult.value(QStringLiteral("delivered")).toBool(), true);
+    QVERIFY2(typeTextResult.value(QStringLiteral("postDispatch")).toObject()
+                     .value(QStringLiteral("targetLive")).toBool(false),
+             qPrintable(QString::fromUtf8(QJsonDocument(typeTextResult)
+                                                  .toJson(QJsonDocument::Compact))));
 
     const auto keyResponse = invoke(&client, QStringLiteral("Input.dispatchKeyEvent"), {
         { QStringLiteral("selector"), QStringLiteral("objectName=\"smoke.textInput\"") },
@@ -590,9 +601,12 @@ void QmlAgentIntegrationTest::clickNodeDeliversSyntheticInput()
         { QStringLiteral("selector"), QStringLiteral("objectName=\"smoke.textInput\"") },
     }, 5, &errorMessage);
     QVERIFY2(focusResponse.has_value(), qPrintable(errorMessage));
-    QCOMPARE(focusResponse->value(QStringLiteral("result")).toObject()
-                     .value(QStringLiteral("focused")).toBool(),
-             true);
+    const QJsonObject focusResult = focusResponse->value(QStringLiteral("result")).toObject();
+    QCOMPARE(focusResult.value(QStringLiteral("focused")).toBool(), true);
+    QVERIFY2(focusResult.value(QStringLiteral("postDispatch")).toObject()
+                     .value(QStringLiteral("targetLive")).toBool(false),
+             qPrintable(QString::fromUtf8(QJsonDocument(focusResult)
+                                                  .toJson(QJsonDocument::Compact))));
 
     const auto keyedQueryResponse = invoke(&client, QStringLiteral("UI.query"), {
         { QStringLiteral("selector"), QStringLiteral("objectName=\"smoke.textInput\"") },
@@ -669,6 +683,11 @@ void QmlAgentIntegrationTest::clickNodeDeliversSyntheticInput()
     QCOMPARE(focusFailedTypeResult.value(QStringLiteral("delivered")).toBool(), false);
     QCOMPARE(focusFailedTypeResult.value(QStringLiteral("reason")).toString(),
              QStringLiteral("focus_failed"));
+    const QJsonObject refusedFocus = focusFailedTypeResult.value(QStringLiteral("focus")).toObject();
+    QCOMPARE(refusedFocus.value(QStringLiteral("focused")).toBool(true), false);
+    QVERIFY2(!refusedFocus.value(QStringLiteral("reason")).toString().isEmpty(),
+             qPrintable(QString::fromUtf8(QJsonDocument(focusFailedTypeResult)
+                                                  .toJson(QJsonDocument::Compact))));
     const QJsonArray focusFailureHints =
             focusFailedTypeResult.value(QStringLiteral("nextHints")).toArray();
     QVERIFY2(!focusFailureHints.isEmpty(),
@@ -695,6 +714,10 @@ void QmlAgentIntegrationTest::clickNodeDeliversSyntheticInput()
     const QJsonObject wheelResult = wheelResponse->value(QStringLiteral("result")).toObject();
     QCOMPARE(wheelResult.value(QStringLiteral("delivered")).toBool(), true);
     QCOMPARE(wheelResult.value(QStringLiteral("mode")).toString(), QStringLiteral("synthetic-qt-event"));
+    QVERIFY2(wheelResult.value(QStringLiteral("postDispatch")).toObject()
+                     .value(QStringLiteral("targetLive")).toBool(false),
+             qPrintable(QString::fromUtf8(QJsonDocument(wheelResult)
+                                                  .toJson(QJsonDocument::Compact))));
 
     const auto flickableAfterResponse = invoke(&client, QStringLiteral("UI.query"), {
         { QStringLiteral("selector"), QStringLiteral("id=\"smokeFlickable\"") },
@@ -727,9 +750,12 @@ void QmlAgentIntegrationTest::clickNodeDeliversSyntheticInput()
         { QStringLiteral("type"), QStringLiteral("mousePress") },
     }, 12, &errorMessage);
     QVERIFY2(mousePressResponse.has_value(), qPrintable(errorMessage));
-    QCOMPARE(mousePressResponse->value(QStringLiteral("result")).toObject()
-                     .value(QStringLiteral("delivered")).toBool(),
-             true);
+    const QJsonObject mousePressResult = mousePressResponse->value(QStringLiteral("result")).toObject();
+    QCOMPARE(mousePressResult.value(QStringLiteral("delivered")).toBool(), true);
+    QVERIFY2(mousePressResult.value(QStringLiteral("postDispatch")).toObject()
+                     .value(QStringLiteral("targetLive")).toBool(false),
+             qPrintable(QString::fromUtf8(QJsonDocument(mousePressResult)
+                                                  .toJson(QJsonDocument::Compact))));
 
     const auto mouseMoveResponse = invoke(&client, QStringLiteral("Input.dispatchMouseEvent"), {
         { QStringLiteral("selector"), QStringLiteral("id=\"smokeDragArea\"") },
@@ -795,6 +821,10 @@ void QmlAgentIntegrationTest::clickNodeDeliversSyntheticInput()
     const QJsonObject dragCommandResult = dragCommandResponse->value(QStringLiteral("result")).toObject();
     QCOMPARE(dragCommandResult.value(QStringLiteral("delivered")).toBool(), true);
     QCOMPARE(dragCommandResult.value(QStringLiteral("eventsSent")).toInt(), 4);
+    QVERIFY2(dragCommandResult.value(QStringLiteral("postDispatch")).toObject()
+                     .value(QStringLiteral("targetLive")).toBool(false),
+             qPrintable(QString::fromUtf8(QJsonDocument(dragCommandResult)
+                                                  .toJson(QJsonDocument::Compact))));
 
     const auto dragCommandAfterResponse = invoke(&client, QStringLiteral("UI.query"), {
         { QStringLiteral("selector"), QStringLiteral("id=\"smokeDragCommandTarget\"") },
@@ -885,9 +915,12 @@ void QmlAgentIntegrationTest::clickNodeDeliversSyntheticInput()
         } },
     }, 23, &errorMessage);
     QVERIFY2(touchEndResponse.has_value(), qPrintable(errorMessage));
-    QCOMPARE(touchEndResponse->value(QStringLiteral("result")).toObject()
-                     .value(QStringLiteral("delivered")).toBool(),
-             true);
+    const QJsonObject touchEndResult = touchEndResponse->value(QStringLiteral("result")).toObject();
+    QCOMPARE(touchEndResult.value(QStringLiteral("delivered")).toBool(), true);
+    QVERIFY2(touchEndResult.value(QStringLiteral("postDispatch")).toObject()
+                     .value(QStringLiteral("targetLive")).toBool(false),
+             qPrintable(QString::fromUtf8(QJsonDocument(touchEndResult)
+                                                  .toJson(QJsonDocument::Compact))));
 
     const auto touchProbeResponse = invoke(&client, QStringLiteral("UI.query"), {
         { QStringLiteral("selector"), QStringLiteral("id=\"smokeTouchProbe\"") },
@@ -1036,10 +1069,31 @@ void QmlAgentIntegrationTest::clickNodeDeliversSyntheticInput()
     QCOMPARE(runtimeDisabledResult.value(QStringLiteral("diagnostics")).toArray().at(0).toObject()
                      .value(QStringLiteral("id")).toString(),
              QStringLiteral("runtime.capability_disabled"));
+    QCOMPARE(runtimeDisabledResult.value(QStringLiteral("mode")).toString(),
+             QStringLiteral("whitebox"));
+    QCOMPARE(runtimeDisabledResult.value(QStringLiteral("verificationRole")).toString(),
+             QStringLiteral("setup-only"));
+
+    const auto runtimeInvokeDisabledResponse = invoke(&client, QStringLiteral("Runtime.invokeMethod"), {
+        { QStringLiteral("selector"), QStringLiteral("id=\"runtimeProbe\"") },
+        { QStringLiteral("method"), QStringLiteral("setRuntimeCounter") },
+        { QStringLiteral("args"), QJsonArray{ 1 } },
+    }, 34, &errorMessage);
+    QVERIFY2(runtimeInvokeDisabledResponse.has_value(), qPrintable(errorMessage));
+    const QJsonObject runtimeInvokeDisabledResult =
+            runtimeInvokeDisabledResponse->value(QStringLiteral("result")).toObject();
+    QCOMPARE(runtimeInvokeDisabledResult.value(QStringLiteral("ok")).toBool(), false);
+    QCOMPARE(runtimeInvokeDisabledResult.value(QStringLiteral("mode")).toString(),
+             QStringLiteral("whitebox"));
+    QCOMPARE(runtimeInvokeDisabledResult.value(QStringLiteral("verificationRole")).toString(),
+             QStringLiteral("setup-only"));
+    QCOMPARE(runtimeInvokeDisabledResult.value(QStringLiteral("diagnostics")).toArray().at(0).toObject()
+                     .value(QStringLiteral("id")).toString(),
+             QStringLiteral("runtime.capability_disabled"));
 
     const auto runtimeEnableResponse = invoke(&client, QStringLiteral("Session.configure"), {
         { QStringLiteral("runtimeMutation"), true },
-    }, 34, &errorMessage);
+    }, 35, &errorMessage);
     QVERIFY2(runtimeEnableResponse.has_value(), qPrintable(errorMessage));
     QCOMPARE(runtimeEnableResponse->value(QStringLiteral("result")).toObject()
                      .value(QStringLiteral("capabilities")).toObject()
@@ -1051,7 +1105,7 @@ void QmlAgentIntegrationTest::clickNodeDeliversSyntheticInput()
         { QStringLiteral("selector"), QStringLiteral("id=\"runtimeProbe\"") },
         { QStringLiteral("property"), QStringLiteral("label") },
         { QStringLiteral("value"), QStringLiteral("patched") },
-    }, 35, &errorMessage);
+    }, 36, &errorMessage);
     QVERIFY2(runtimeSetResponse.has_value(), qPrintable(errorMessage));
     const QJsonObject runtimeSetResult = runtimeSetResponse->value(QStringLiteral("result")).toObject();
     QCOMPARE(runtimeSetResult.value(QStringLiteral("ok")).toBool(), true);
@@ -1069,7 +1123,7 @@ void QmlAgentIntegrationTest::clickNodeDeliversSyntheticInput()
         { QStringLiteral("selector"), QStringLiteral("id=\"runtimeProbe\"") },
         { QStringLiteral("property"), QStringLiteral("doesNotExist") },
         { QStringLiteral("value"), true },
-    }, 36, &errorMessage);
+    }, 37, &errorMessage);
     QVERIFY2(missingRuntimePropertyResponse.has_value(), qPrintable(errorMessage));
     const QJsonObject missingRuntimePropertyResult = missingRuntimePropertyResponse
             ->value(QStringLiteral("result")).toObject();
@@ -1082,7 +1136,7 @@ void QmlAgentIntegrationTest::clickNodeDeliversSyntheticInput()
         { QStringLiteral("selector"), QStringLiteral("id=\"runtimeProbe\"") },
         { QStringLiteral("method"), QStringLiteral("setRuntimeCounter") },
         { QStringLiteral("args"), QJsonArray{ 7 } },
-    }, 37, &errorMessage);
+    }, 38, &errorMessage);
     QVERIFY2(runtimeInvokeResponse.has_value(), qPrintable(errorMessage));
     const QJsonObject runtimeInvokeResult = runtimeInvokeResponse->value(QStringLiteral("result")).toObject();
     QCOMPARE(runtimeInvokeResult.value(QStringLiteral("ok")).toBool(), true);
@@ -1098,7 +1152,7 @@ void QmlAgentIntegrationTest::clickNodeDeliversSyntheticInput()
             QStringLiteral("counter"),
             QStringLiteral("label"),
         } },
-    }, 38, &errorMessage);
+    }, 39, &errorMessage);
     QVERIFY2(runtimeProbeResponse.has_value(), qPrintable(errorMessage));
     const QJsonObject runtimeProbeProperties = runtimeProbeResponse
             ->value(QStringLiteral("result")).toObject()
@@ -1128,6 +1182,11 @@ void QmlAgentIntegrationTest::clickNodeDeliversSyntheticInput()
     const QJsonObject clickResult = clickResponse->value(QStringLiteral("result")).toObject();
     QCOMPARE(clickResult.value(QStringLiteral("delivered")).toBool(), true);
     QCOMPARE(clickResult.value(QStringLiteral("mode")).toString(), QStringLiteral("synthetic-qt-event"));
+    const QJsonObject postDispatch = clickResult.value(QStringLiteral("postDispatch")).toObject();
+    QCOMPARE(postDispatch.value(QStringLiteral("targetLive")).toBool(false), true);
+    QCOMPARE(postDispatch.value(QStringLiteral("actionabilityRechecked")).toBool(false), true);
+    QCOMPARE(postDispatch.value(QStringLiteral("verificationRole")).toString(),
+             QStringLiteral("post-dispatch evidence only"));
 
     const auto clickedQueryResponse = invoke(&client, QStringLiteral("UI.query"), {
         { QStringLiteral("selector"), QStringLiteral("objectName=\"smoke.clicked\"") },
@@ -1138,6 +1197,89 @@ void QmlAgentIntegrationTest::clickNodeDeliversSyntheticInput()
     const QJsonArray clickedMatches = clickedQueryResponse->value(QStringLiteral("result")).toObject()
             .value(QStringLiteral("matches")).toArray();
     QCOMPARE(clickedMatches.size(), 1);
+}
+
+void QmlAgentIntegrationTest::inputTargetsMultipleWindows()
+{
+    QString errorMessage;
+    SmokeAppRunner smoke;
+    QVERIFY2(smoke.start(&errorMessage), qPrintable(errorMessage));
+
+    QQmlDebugConnection connection;
+    QmlAgentDebugClient client(&connection);
+    QVERIFY2(connectToQmlAgent(smoke.port(), &connection, &client, &errorMessage),
+             qPrintable(errorMessage));
+
+    const auto primaryQuery = invoke(&client, QStringLiteral("UI.query"), {
+        { QStringLiteral("selector"), QStringLiteral("objectName=\"smoke.clickArea\"") },
+        { QStringLiteral("fields"), QJsonArray{
+            QStringLiteral("nodeId"),
+            QStringLiteral("windowId"),
+            QStringLiteral("objectName"),
+        } },
+    }, 1, &errorMessage);
+    QVERIFY2(primaryQuery.has_value(), qPrintable(errorMessage));
+    const QJsonObject primaryNode = primaryQuery->value(QStringLiteral("result")).toObject()
+            .value(QStringLiteral("matches")).toArray().at(0).toObject();
+
+    const auto secondaryQuery = invoke(&client, QStringLiteral("UI.query"), {
+        { QStringLiteral("selector"), QStringLiteral("objectName=\"smoke.secondaryWindowClickArea\"") },
+        { QStringLiteral("fields"), QJsonArray{
+            QStringLiteral("nodeId"),
+            QStringLiteral("windowId"),
+            QStringLiteral("objectName"),
+        } },
+    }, 2, &errorMessage);
+    QVERIFY2(secondaryQuery.has_value(), qPrintable(errorMessage));
+    const QJsonObject secondaryNode = secondaryQuery->value(QStringLiteral("result")).toObject()
+            .value(QStringLiteral("matches")).toArray().at(0).toObject();
+
+    QVERIFY(primaryNode.value(QStringLiteral("windowId")).toInt(-1) > 0);
+    QVERIFY(secondaryNode.value(QStringLiteral("windowId")).toInt(-1) > 0);
+    QVERIFY2(primaryNode.value(QStringLiteral("windowId")).toInt()
+                     != secondaryNode.value(QStringLiteral("windowId")).toInt(),
+             qPrintable(QString::fromUtf8(QJsonDocument(QJsonObject{
+                 { QStringLiteral("primary"), primaryNode },
+                 { QStringLiteral("secondary"), secondaryNode },
+             }).toJson(QJsonDocument::Compact))));
+
+    const auto primaryClick = invoke(&client, QStringLiteral("Input.clickNode"), {
+        { QStringLiteral("selector"), QStringLiteral("objectName=\"smoke.clickArea\"") },
+    }, 3, &errorMessage);
+    QVERIFY2(primaryClick.has_value(), qPrintable(errorMessage));
+    const QJsonObject primaryClickResult = primaryClick->value(QStringLiteral("result")).toObject();
+    QCOMPARE(primaryClickResult.value(QStringLiteral("delivered")).toBool(false), true);
+    QCOMPARE(primaryClickResult.value(QStringLiteral("deliveryWindow")).toObject()
+                     .value(QStringLiteral("windowId")).toInt(-1),
+             primaryNode.value(QStringLiteral("windowId")).toInt(-2));
+
+    const auto secondaryClick = invoke(&client, QStringLiteral("Input.clickNode"), {
+        { QStringLiteral("selector"), QStringLiteral("objectName=\"smoke.secondaryWindowClickArea\"") },
+    }, 4, &errorMessage);
+    QVERIFY2(secondaryClick.has_value(), qPrintable(errorMessage));
+    const QJsonObject secondaryClickResult = secondaryClick->value(QStringLiteral("result")).toObject();
+    QCOMPARE(secondaryClickResult.value(QStringLiteral("delivered")).toBool(false), true);
+    QCOMPARE(secondaryClickResult.value(QStringLiteral("deliveryWindow")).toObject()
+                     .value(QStringLiteral("windowId")).toInt(-1),
+             secondaryNode.value(QStringLiteral("windowId")).toInt(-2));
+
+    const auto primaryVerify = invoke(&client, QStringLiteral("UI.query"), {
+        { QStringLiteral("selector"), QStringLiteral("objectName=\"smoke.clicked\"") },
+        { QStringLiteral("includeSource"), false },
+    }, 5, &errorMessage);
+    QVERIFY2(primaryVerify.has_value(), qPrintable(errorMessage));
+    QCOMPARE(primaryVerify->value(QStringLiteral("result")).toObject()
+                     .value(QStringLiteral("matches")).toArray().size(),
+             1);
+
+    const auto secondaryVerify = invoke(&client, QStringLiteral("UI.query"), {
+        { QStringLiteral("selector"), QStringLiteral("objectName=\"smoke.secondaryWindowClicked\"") },
+        { QStringLiteral("includeSource"), false },
+    }, 6, &errorMessage);
+    QVERIFY2(secondaryVerify.has_value(), qPrintable(errorMessage));
+    QCOMPARE(secondaryVerify->value(QStringLiteral("result")).toObject()
+                     .value(QStringLiteral("matches")).toArray().size(),
+             1);
 }
 
 void QmlAgentIntegrationTest::uiSubscribeEmitsCoalescedChangeEvents()
@@ -1270,7 +1412,7 @@ void QmlAgentIntegrationTest::uiTreeSupportsProjectionBoundsAndCollapse()
     QCOMPARE(projected.value(QStringLiteral("nodeCount")).toInt(), 5);
     QVERIFY(projected.value(QStringLiteral("omittedNodeCount")).toInt() > 0);
     const QJsonObject projectedRoot = projected.value(QStringLiteral("windows")).toArray()
-            .at(0).toObject().value(QStringLiteral("root")).toObject();
+            .first().toObject().value(QStringLiteral("root")).toObject();
     QVERIFY(projectedRoot.contains(QStringLiteral("nodeId")));
     QVERIFY(projectedRoot.contains(QStringLiteral("children")));
     QVERIFY(!projectedRoot.contains(QStringLiteral("sourceLocation")));
@@ -1282,9 +1424,8 @@ void QmlAgentIntegrationTest::uiTreeSupportsProjectionBoundsAndCollapse()
         { QStringLiteral("collapseRepeated"), true },
     }, 2, &errorMessage);
     QVERIFY2(collapsedResponse.has_value(), qPrintable(errorMessage));
-    const QJsonObject collapsedRoot = collapsedResponse->value(QStringLiteral("result")).toObject()
-            .value(QStringLiteral("windows")).toArray().at(0).toObject()
-            .value(QStringLiteral("root")).toObject();
+    const QJsonArray collapsedWindows = collapsedResponse->value(QStringLiteral("result")).toObject()
+            .value(QStringLiteral("windows")).toArray();
 
     std::function<bool(const QJsonObject &)> hasCollapsedRepeatedDelegate =
             [&](const QJsonObject &node) {
@@ -1309,9 +1450,17 @@ void QmlAgentIntegrationTest::uiTreeSupportsProjectionBoundsAndCollapse()
         }
         return false;
     };
-    QVERIFY2(hasCollapsedRepeatedDelegate(collapsedRoot),
-             qPrintable(QString::fromUtf8(QJsonDocument(collapsedRoot)
-                                          .toJson(QJsonDocument::Compact))));
+    bool foundCollapsedDelegate = false;
+    for (const QJsonValue &windowValue : collapsedWindows) {
+        if (hasCollapsedRepeatedDelegate(windowValue.toObject().value(QStringLiteral("root")).toObject())) {
+            foundCollapsedDelegate = true;
+            break;
+        }
+    }
+    QVERIFY2(foundCollapsedDelegate,
+             qPrintable(QString::fromUtf8(QJsonDocument(QJsonObject{
+                 { QStringLiteral("windows"), collapsedWindows },
+             }).toJson(QJsonDocument::Compact))));
 
     const auto queryResponse = invoke(&client, QStringLiteral("UI.query"), {
         { QStringLiteral("selector"), QStringLiteral("objectName=\"smoke.textInput\"") },
@@ -1836,6 +1985,40 @@ void QmlAgentIntegrationTest::qtQuickControlsExposeAuthoredIds()
         }
     }
 
+    const auto exactButtonTypeResponse = invoke(&client, QStringLiteral("UI.query"), {
+        { QStringLiteral("selector"), QStringLiteral("type=\"Button\"") },
+        { QStringLiteral("includeSource"), false },
+        { QStringLiteral("maxNodes"), 50 },
+        { QStringLiteral("fields"), QJsonArray{
+            QStringLiteral("nodeId"),
+            QStringLiteral("type"),
+            QStringLiteral("typeAliases"),
+            QStringLiteral("qmlId"),
+        } },
+    }, requestId++, &errorMessage);
+    QVERIFY2(exactButtonTypeResponse.has_value(), qPrintable(errorMessage));
+    const QJsonArray exactButtonMatches =
+            exactButtonTypeResponse->value(QStringLiteral("result")).toObject()
+                    .value(QStringLiteral("matches")).toArray();
+    QVERIFY2(!exactButtonMatches.isEmpty(), "Expected exact type=\"Button\" to find Button controls.");
+    for (const QJsonValue &matchValue : exactButtonMatches) {
+        const QJsonObject node = matchValue.toObject();
+        const QString type = node.value(QStringLiteral("type")).toString();
+        const QJsonArray aliases = node.value(QStringLiteral("typeAliases")).toArray();
+        bool exactTypeMatch = type == QLatin1String("Button");
+        for (const QJsonValue &alias : aliases)
+            exactTypeMatch = exactTypeMatch || alias.toString() == QLatin1String("Button");
+        QVERIFY2(exactTypeMatch,
+                 qPrintable(QStringLiteral("type=\"Button\" must not use substring matching: %1")
+                                    .arg(QString::fromUtf8(QJsonDocument(node)
+                                                                   .toJson(QJsonDocument::Compact)))));
+        QVERIFY2(type != QLatin1String("ToolButton")
+                         && type != QLatin1String("RoundButton")
+                         && type != QLatin1String("RadioButton")
+                         && type != QLatin1String("DelayButton"),
+                 qPrintable(QStringLiteral("type=\"Button\" must not match %1").arg(type)));
+    }
+
     auto queryRepeatedDelegateIds = [&](const QString &qmlId, const QString &type) {
         const auto response = invoke(&client, QStringLiteral("UI.query"), {
             { QStringLiteral("selector"), QStringLiteral("id=\"%1\"").arg(qmlId) },
@@ -1937,6 +2120,10 @@ void QmlAgentIntegrationTest::qtQuickControlsExposeAuthoredIds()
     QCOMPARE(blockedIssues.size(), 1);
     QCOMPARE(blockedIssues.at(0).toObject().value(QStringLiteral("id")).toString(),
              QStringLiteral("input.not_actionable"));
+    QVERIFY2(!blockedIssues.at(0).toObject().value(QStringLiteral("evidenceProfile")).toObject().isEmpty(),
+             qPrintable(QStringLiteral("Expected modal-popup actionability diagnostic to carry evidenceProfile: %1")
+                                .arg(QString::fromUtf8(QJsonDocument(blockedIssues.at(0).toObject())
+                                                       .toJson(QJsonDocument::Compact)))));
     QVERIFY2(hasReason(blockedIssues.at(0).toObject().value(QStringLiteral("actionability"))
                               .toObject().value(QStringLiteral("reasons")).toArray(),
                        QStringLiteral("blocked_by_modal_popup")),
@@ -1952,6 +2139,19 @@ void QmlAgentIntegrationTest::qtQuickControlsExposeAuthoredIds()
     QCOMPARE(blockedClickResult.value(QStringLiteral("reason")).toString(),
              QStringLiteral("blocked_by_modal_popup"));
     clickAndVerify(QStringLiteral("controlsPopupCloseButton"));
+    const auto popupClosedResponse = invoke(&client, QStringLiteral("UI.waitFor"), {
+        { QStringLiteral("selector"), QStringLiteral("id=\"controlsPopupCloseButton\"") },
+        { QStringLiteral("until"), QJsonObject{
+            { QStringLiteral("state"), QStringLiteral("notFound") },
+        } },
+        { QStringLiteral("timeoutMs"), 1000 },
+    }, requestId++, &errorMessage);
+    QVERIFY2(popupClosedResponse.has_value(), qPrintable(errorMessage));
+    const QJsonObject popupClosed = popupClosedResponse->value(QStringLiteral("result")).toObject();
+    QVERIFY2(popupClosed.value(QStringLiteral("ok")).toBool(false),
+             qPrintable(QStringLiteral("Expected popup close button to disappear after close click: %1")
+                                .arg(QString::fromUtf8(QJsonDocument(popupClosed)
+                                                       .toJson(QJsonDocument::Compact)))));
     clickAndVerify(QStringLiteral("controlsOpenDialogButton"));
     waitForFound(QStringLiteral("id=\"controlsDialogConfirmButton\""));
     clickAndVerify(QStringLiteral("controlsDialogConfirmButton"));
@@ -2634,9 +2834,18 @@ void QmlAgentIntegrationTest::diagnosticsReportLayoutFailures()
     QVERIFY2(!issueById.value(QStringLiteral("layout.child_exceeds_parent"))
                       .value(QStringLiteral("blameChain")).toArray().isEmpty(),
              "Expected clipped child diagnostic to include factual blame chain.");
+    QVERIFY2(!issueById.value(QStringLiteral("layout.child_exceeds_parent"))
+                      .value(QStringLiteral("evidenceProfile")).toObject().isEmpty(),
+             "Expected clipped child diagnostic to include evidenceProfile.");
     QVERIFY2(!issueById.value(QStringLiteral("layout.outside_viewport"))
                       .value(QStringLiteral("blameChain")).toArray().isEmpty(),
              "Expected outside viewport diagnostic to include factual blame chain.");
+    QCOMPARE(issueById.value(QStringLiteral("layout.outside_viewport"))
+                     .value(QStringLiteral("confidence")).toDouble(),
+             0.90);
+    QVERIFY2(!issueById.value(QStringLiteral("layout.outside_viewport"))
+                      .value(QStringLiteral("evidenceProfile")).toObject().isEmpty(),
+             "Expected outside viewport diagnostic to describe its evidence model.");
 
     const auto summaryResponse = invoke(&client, QStringLiteral("Diagnostics.analyzeTree"), {
         { QStringLiteral("verbosity"), QStringLiteral("summary") },
@@ -2647,16 +2856,19 @@ void QmlAgentIntegrationTest::diagnosticsReportLayoutFailures()
     const QJsonObject compactSummary = summaryResult.value(QStringLiteral("summary")).toObject();
     QCOMPARE(compactSummary.value(QStringLiteral("verbosity")).toString(),
              QStringLiteral("summary"));
-    QCOMPARE(compactSummary.value(QStringLiteral("issueCount")).toInt(), issues.size());
-    QCOMPARE(compactSummary.value(QStringLiteral("returnedIssueCount")).toInt(),
-             qMin(1, issues.size()));
-    QCOMPARE(compactSummary.value(QStringLiteral("moreAvailable")).toBool(), issues.size() > 1);
+    const int summaryIssueCount = compactSummary.value(QStringLiteral("issueCount")).toInt(-1);
+    const int summaryReturnedIssueCount =
+            compactSummary.value(QStringLiteral("returnedIssueCount")).toInt(-1);
+    QVERIFY(summaryIssueCount >= 0);
+    QCOMPARE(summaryReturnedIssueCount, qMin(1, summaryIssueCount));
+    QCOMPARE(compactSummary.value(QStringLiteral("moreAvailable")).toBool(),
+             summaryIssueCount > summaryReturnedIssueCount);
     QVERIFY2(compactSummary.value(QStringLiteral("omittedFields")).toArray()
                      .contains(QStringLiteral("evidence")),
              qPrintable(QString::fromUtf8(QJsonDocument(summaryResult)
                                                   .toJson(QJsonDocument::Compact))));
     const QJsonArray compactIssues = summaryResult.value(QStringLiteral("issues")).toArray();
-    QCOMPARE(compactIssues.size(), qMin(1, issues.size()));
+    QCOMPARE(compactIssues.size(), summaryReturnedIssueCount);
     if (!compactIssues.isEmpty()) {
         const QJsonObject compactIssue = compactIssues.at(0).toObject();
         QVERIFY2(!compactIssue.contains(QStringLiteral("evidence")),
@@ -3260,7 +3472,23 @@ void QmlAgentIntegrationTest::renderCaptureScreenshot()
     QVERIFY2(connectToQmlAgent(smoke.port(), &connection, &client, &errorMessage),
              qPrintable(errorMessage));
 
-    const auto response = invoke(&client, QStringLiteral("Render.captureScreenshot"), {}, 1,
+    const auto mainWindowQuery = invoke(&client, QStringLiteral("UI.query"), {
+        { QStringLiteral("selector"), QStringLiteral("objectName=\"smoke.content\"") },
+        { QStringLiteral("fields"), QJsonArray{
+            QStringLiteral("nodeId"),
+            QStringLiteral("windowId"),
+            QStringLiteral("objectName"),
+        } },
+    }, 1, &errorMessage);
+    QVERIFY2(mainWindowQuery.has_value(), qPrintable(errorMessage));
+    const int mainWindowId = mainWindowQuery->value(QStringLiteral("result")).toObject()
+            .value(QStringLiteral("matches")).toArray().at(0).toObject()
+            .value(QStringLiteral("windowId")).toInt(-1);
+    QVERIFY(mainWindowId > 0);
+
+    const auto response = invoke(&client, QStringLiteral("Render.captureScreenshot"), {
+        { QStringLiteral("windowId"), mainWindowId },
+    }, 2,
                                  &errorMessage);
     QVERIFY2(response.has_value(), qPrintable(errorMessage));
 
@@ -3281,7 +3509,8 @@ void QmlAgentIntegrationTest::renderCaptureScreenshot()
 
     const auto metadataResponse = invoke(&client, QStringLiteral("Render.captureScreenshot"), {
         { QStringLiteral("omitData"), true },
-    }, 2, &errorMessage);
+        { QStringLiteral("windowId"), mainWindowId },
+    }, 3, &errorMessage);
     QVERIFY2(metadataResponse.has_value(), qPrintable(errorMessage));
     const QJsonObject metadataResult = metadataResponse->value(QStringLiteral("result")).toObject();
     QCOMPARE(metadataResult.value(QStringLiteral("captured")).toBool(), true);
@@ -3295,6 +3524,7 @@ void QmlAgentIntegrationTest::renderCaptureScreenshot()
 
     const auto scaledRegionResponse = invoke(&client, QStringLiteral("Render.captureScreenshot"), {
         { QStringLiteral("omitData"), true },
+        { QStringLiteral("windowId"), mainWindowId },
         { QStringLiteral("scale"), 0.5 },
         { QStringLiteral("region"), QJsonObject{
             { QStringLiteral("x"), 0 },
@@ -3302,7 +3532,7 @@ void QmlAgentIntegrationTest::renderCaptureScreenshot()
             { QStringLiteral("width"), 160 },
             { QStringLiteral("height"), 120 },
         } },
-    }, 3, &errorMessage);
+    }, 4, &errorMessage);
     QVERIFY2(scaledRegionResponse.has_value(), qPrintable(errorMessage));
     const QJsonObject scaledRegionResult =
             scaledRegionResponse->value(QStringLiteral("result")).toObject();

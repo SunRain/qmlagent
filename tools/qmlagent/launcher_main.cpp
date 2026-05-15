@@ -33,6 +33,45 @@
 #include <QtQuick/qquickitem.h>
 #include <QtQuick/qquickwindow.h>
 
+#include <atomic>
+#include <csignal>
+
+#if defined(Q_OS_UNIX)
+#include <signal.h>
+#include <unistd.h>
+#endif
+
+static std::atomic_int s_pendingSignal = 0;
+
+static void handleLauncherSignal(int signalNumber)
+{
+    s_pendingSignal.store(signalNumber);
+}
+
+static void terminateTargetProcess(QProcess *target)
+{
+    if (!target || target->state() == QProcess::NotRunning)
+        return;
+
+#if defined(Q_OS_UNIX)
+    const qint64 pid = target->processId();
+    if (pid > 0) {
+        ::kill(-pid, SIGTERM);
+        QTimer::singleShot(1500, target, [target, pid]() {
+            if (target->state() != QProcess::NotRunning)
+                ::kill(-pid, SIGKILL);
+        });
+        return;
+    }
+#endif
+
+    target->terminate();
+    QTimer::singleShot(1500, target, [target]() {
+        if (target->state() != QProcess::NotRunning)
+            target->kill();
+    });
+}
+
 class QmlAgentClient : public QQmlDebugClient
 {
     Q_OBJECT
@@ -89,6 +128,66 @@ static QString qmlAgentTempRoot()
     return QDir(base).filePath(QStringLiteral("QmlAgent"));
 }
 
+static QFileDevice::Permissions privateDirPermissions()
+{
+    return QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner;
+}
+
+static QFileDevice::Permissions privateFilePermissions()
+{
+    return QFileDevice::ReadOwner | QFileDevice::WriteOwner;
+}
+
+static bool ensurePrivateDirectory(const QString &path, QString *error = nullptr)
+{
+    const QFileInfo before(path);
+    if (before.exists() && (before.isSymLink() || !before.isDir())) {
+        if (error)
+            *error = QStringLiteral("Refusing non-directory or symlink path: %1").arg(path);
+        return false;
+    }
+
+    if (!QDir().mkpath(path)) {
+        if (error)
+            *error = QStringLiteral("Could not create directory: %1").arg(path);
+        return false;
+    }
+
+    const QFileInfo after(path);
+    if (after.isSymLink() || !after.isDir()) {
+        if (error)
+            *error = QStringLiteral("Refusing non-directory or symlink path: %1").arg(path);
+        return false;
+    }
+
+    QFile::setPermissions(path, privateDirPermissions());
+    return true;
+}
+
+static bool pathIsInsideDirectory(const QString &path, const QString &directory)
+{
+    const QString canonicalDirectory = QFileInfo(directory).canonicalFilePath();
+    if (canonicalDirectory.isEmpty())
+        return false;
+
+    const QFileInfo info(path);
+    const QString canonicalParent = info.dir().canonicalPath();
+    if (canonicalParent.isEmpty())
+        return false;
+
+    return canonicalParent == canonicalDirectory
+            || canonicalParent.startsWith(canonicalDirectory + QLatin1Char('/'));
+}
+
+static bool responsePathAllowed(const QString &path, const QString &mailboxDir)
+{
+    if (QFileInfo(path).isSymLink())
+        return false;
+
+    const QString replyRoot = QDir(qmlAgentTempRoot()).filePath(QStringLiteral("mailbox-replies"));
+    return pathIsInsideDirectory(path, replyRoot) || pathIsInsideDirectory(path, mailboxDir);
+}
+
 static QStringList globalLauncherRegistryDirs()
 {
     return {
@@ -127,7 +226,8 @@ static void writeLauncherExitReport(const QString &sessionId, qint64 targetPid,
         return;
 
     const QString dir = launcherExitDir();
-    QDir().mkpath(dir);
+    if (!ensurePrivateDirectory(dir))
+        return;
     QSaveFile report(QDir(dir).filePath(QStringLiteral("%1.json").arg(sessionId)));
     if (!report.open(QIODevice::WriteOnly))
         return;
@@ -154,14 +254,15 @@ static void writeLauncherExitReport(const QString &sessionId, qint64 targetPid,
 
     report.write(compactJson(object));
     report.write("\n");
-    report.commit();
+    if (report.commit())
+        QFile::setPermissions(report.fileName(), privateFilePermissions());
 }
 
 static QStringList launcherRegistryDirs()
 {
     QStringList dirs;
     const QString workspaceStateDir = QDir::current().filePath(QStringLiteral(".qmlagent"));
-    QDir().mkpath(workspaceStateDir);
+    ensurePrivateDirectory(workspaceStateDir);
     const QFileInfo workspaceStateInfo(workspaceStateDir);
     if (workspaceStateInfo.exists() && workspaceStateInfo.isWritable())
         dirs.append(QDir(workspaceStateDir).filePath(QStringLiteral("launcher-sessions")));
@@ -190,12 +291,14 @@ static void removeLauncherRegistryFiles(const QString &sessionId)
 static void writeLauncherRegistryFiles(const QString &sessionId, const QJsonObject &metadata)
 {
     for (const QString &path : launcherRegistryPaths(sessionId)) {
-        QDir().mkpath(QFileInfo(path).absolutePath());
+        if (!ensurePrivateDirectory(QFileInfo(path).absolutePath()))
+            continue;
         QSaveFile sessionFile(path);
         if (!sessionFile.open(QIODevice::WriteOnly))
             continue;
         sessionFile.write(compactJson(metadata));
-        sessionFile.commit();
+        if (sessionFile.commit())
+            QFile::setPermissions(path, privateFilePermissions());
     }
 }
 
@@ -203,7 +306,8 @@ static QString launcherRuntimeDir()
 {
     const QString path = QDir(qmlAgentTempRoot()).filePath(
             QStringLiteral("qmlagent-%1").arg(qint64(QCoreApplication::applicationPid())));
-    QDir().mkpath(path);
+    ensurePrivateDirectory(qmlAgentTempRoot());
+    ensurePrivateDirectory(path);
     return path;
 }
 
@@ -212,6 +316,15 @@ static QJsonObject makeRequest(int id, const QString &method, const QJsonObject 
     return {
         { QStringLiteral("jsonrpc"), QStringLiteral("2.0") },
         { QStringLiteral("id"), id },
+        { QStringLiteral("method"), method },
+        { QStringLiteral("params"), params },
+    };
+}
+
+static QJsonObject makeNotification(const QString &method, const QJsonObject &params)
+{
+    return {
+        { QStringLiteral("jsonrpc"), QStringLiteral("2.0") },
         { QStringLiteral("method"), method },
         { QStringLiteral("params"), params },
     };
@@ -393,11 +506,8 @@ public:
 
     bool listen(QString *error)
     {
-        if (!QDir().mkpath(m_controlMailboxDir)) {
-            *error = QStringLiteral("Could not create qmlagent-launcher control mailbox: %1")
-                             .arg(m_controlMailboxDir);
+        if (!ensurePrivateDirectory(m_controlMailboxDir, error))
             return false;
-        }
         m_mailboxWatcher.addPath(m_controlMailboxDir);
         return true;
     }
@@ -419,6 +529,12 @@ public:
 
     bool stopRequested() const { return m_stopRequested; }
 
+    void requestStop()
+    {
+        m_stopRequested = true;
+        terminateTargetProcess(m_target);
+    }
+
 private:
     struct PendingAgentRequest
     {
@@ -429,9 +545,9 @@ private:
     static QString responsePathForRequest(const QString &requestPath, const QJsonObject &request)
     {
         const QString replyTo = request.value(QStringLiteral("replyTo")).toString();
-        if (!replyTo.isEmpty())
-            return replyTo;
         const QFileInfo info(requestPath);
+        if (!replyTo.isEmpty() && responsePathAllowed(replyTo, info.dir().absolutePath()))
+            return replyTo;
         QString name = info.fileName();
         if (name.startsWith(QLatin1String("request-")))
             name.replace(0, 8, QStringLiteral("response-"));
@@ -445,6 +561,11 @@ private:
                                                   QDir::Name);
         for (const QString &entry : entries) {
             const QString requestPath = dir.filePath(entry);
+            const QFileInfo requestInfo(requestPath);
+            if (requestInfo.isSymLink() || !pathIsInsideDirectory(requestPath, m_controlMailboxDir)) {
+                QFile::remove(requestPath);
+                continue;
+            }
             QFile requestFile(requestPath);
             if (!requestFile.open(QIODevice::ReadOnly))
                 continue;
@@ -478,18 +599,12 @@ private:
         }
 
         if (method == QLatin1String("Session.stop")) {
-            m_stopRequested = true;
             writeControlResponse(responsePath, controlId, {
                 { QStringLiteral("ok"), true },
                 { QStringLiteral("action"), QStringLiteral("stop") },
                 { QStringLiteral("targetPid"), m_target ? qint64(m_target->processId()) : 0 },
             });
-            if (m_target)
-                m_target->terminate();
-            QTimer::singleShot(1500, this, [this]() {
-                if (m_target && m_target->state() != QProcess::NotRunning)
-                    m_target->kill();
-            });
+            requestStop();
             return;
         }
 
@@ -581,6 +696,14 @@ private:
         result.insert(QStringLiteral("service"), QStringLiteral("QmlAgentPreviewShell"));
         result.insert(QStringLiteral("action"), QStringLiteral("reload-preview"));
         result.insert(QStringLiteral("root"), m_previewRoot);
+        result.insert(QStringLiteral("event"), QStringLiteral("Preview.reloaded"));
+        result.insert(QStringLiteral("subscriptionsInvalidated"), true);
+        m_agentClient->sendMessage(compactJson(makeNotification(
+                QStringLiteral("Session.reset"),
+                {
+                    { QStringLiteral("reason"), QStringLiteral("preview-reloaded") },
+                    { QStringLiteral("event"), QStringLiteral("Preview.reloaded") },
+                })));
         writeControlResponse(responsePath, controlId, result);
     }
 
@@ -635,6 +758,11 @@ private:
     {
         if (responsePath.isEmpty())
             return;
+        if (QFileInfo(responsePath).isSymLink())
+            return;
+        const QString parent = QFileInfo(responsePath).absolutePath();
+        if (!ensurePrivateDirectory(parent))
+            return;
         QSaveFile responseFile(responsePath);
         if (!responseFile.open(QIODevice::WriteOnly))
             return;
@@ -644,7 +772,8 @@ private:
             { QStringLiteral("result"), result },
         }));
         responseFile.write("\n");
-        responseFile.commit();
+        if (responseFile.commit())
+            QFile::setPermissions(responsePath, privateFilePermissions());
     }
 
     QString m_controlMailboxDir;
@@ -770,6 +899,11 @@ int main(int argc, char **argv)
 
     QProcess target;
     qint64 launchedTargetPid = 0;
+#if defined(Q_OS_UNIX)
+    target.setChildProcessModifier([]() {
+        ::setsid();
+    });
+#endif
     LauncherControlServer controlServer(controlMailboxDir, debugSocketPath, sessionType,
                                         launchCommand, previewRoot, previewControlName, &target,
                                         &agentClient, &app);
@@ -787,6 +921,23 @@ int main(int argc, char **argv)
         QFile::remove(debugSocketPath);
         QDir(runtimeDir).removeRecursively();
     });
+    std::signal(SIGINT, handleLauncherSignal);
+    std::signal(SIGTERM, handleLauncherSignal);
+    QTimer signalTimer;
+    signalTimer.setInterval(100);
+    QObject::connect(&signalTimer, &QTimer::timeout, &app, [&]() {
+        const int signalNumber = s_pendingSignal.exchange(0);
+        if (!signalNumber)
+            return;
+        printJsonLine({
+            { QStringLiteral("event"), QStringLiteral("launcherSignal") },
+            { QStringLiteral("signal"), signalNumber },
+            { QStringLiteral("targetPid"), qint64(target.processId()) },
+        });
+        controlServer.requestStop();
+        QTimer::singleShot(2000, &app, &QCoreApplication::quit);
+    });
+    signalTimer.start();
     QObject::connect(&target, &QProcess::finished, &app, [&](int exitCode, QProcess::ExitStatus status) {
         if (!controlServer.stopRequested()) {
             writeLauncherExitReport(sessionId, launchedTargetPid, sessionType, launchCommand,

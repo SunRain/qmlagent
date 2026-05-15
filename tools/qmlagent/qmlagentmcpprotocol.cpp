@@ -97,7 +97,7 @@ QJsonArray toolList()
 
     return {
         tool(QStringLiteral("qmlagent.connect_tcp"),
-             QStringLiteral("Attach this MCP server directly to a manually launched Qt app using -qmljsdebugger=port:<port>,host:<host>,services:QmlAgent. Default host/port is 127.0.0.1:3768; use that fixed port unless the handoff explicitly says otherwise. Do not scan or pre-bind ports. If the app was started with qmlagent-launcher preview <Main.qml> or qmlagent-launcher app <executable>, request/response tools auto-route through the launcher and this attach step is not needed. Use direct attach for streamed subscriptions such as qmlagent.ui_subscribe and qmlagent.log_enable."),
+             QStringLiteral("Attach this MCP server directly to a manually launched Qt app using -qmljsdebugger=port:<port>,host:<host>,services:QmlAgent. Prefer qmlagent-launcher, which avoids TCP ports. If direct TCP is required, pass the exact port from the launch command; when omitted the client uses a deterministic per-user fallback port. Do not scan or pre-bind ports. If the app was started with qmlagent-launcher preview <Main.qml> or qmlagent-launcher app <executable>, request/response tools auto-route through the launcher and this attach step is not needed. Use direct attach for streamed subscriptions such as qmlagent.ui_subscribe and qmlagent.log_enable."),
              schema({
                  { QStringLiteral("host"), QJsonObject{
                      { QStringLiteral("type"), QStringLiteral("string") },
@@ -105,7 +105,7 @@ QJsonArray toolList()
                  } },
                  { QStringLiteral("port"), QJsonObject{
                      { QStringLiteral("type"), QStringLiteral("integer") },
-                     { QStringLiteral("description"), QStringLiteral("TCP port. Defaults to 3768.") },
+                     { QStringLiteral("description"), QStringLiteral("TCP port from the target launch command. When omitted, qmlagent-mcp uses a deterministic per-user fallback port; launcher sessions do not need this.") },
                  } },
                  { QStringLiteral("timeoutMs"), QJsonObject{
                      { QStringLiteral("type"), QStringLiteral("integer") },

@@ -30,6 +30,7 @@ public:
     void engineAdded(QJSEngine *engine) override;
 
 protected:
+    void stateAboutToBeChanged(State state) override;
     void messageReceived(const QByteArray &message) override;
 
 private:
@@ -37,13 +38,14 @@ private:
     QJsonObject sessionInfo() const;
     QJsonObject sessionConfigure(const QJsonObject &params);
     QJsonObject runtimeMutationDisabledResult() const;
+    void resetSessionState(const QString &reason);
     void sendProtocolMessage(const QByteArray &message);
     void sendEntryEvent(const QJsonObject &entry);
     QJsonObject subscribeUi(const QJsonObject &params);
     QJsonObject unsubscribeUi();
     void installUiWatchers();
     void clearUiWatchers();
-    void watchUiObject(QObject *object, QSet<QObject *> *seen);
+    void watchUiObject(QObject *object, QSet<QObject *> *seen, int depth = 0);
     void scheduleUiWatcherRefresh();
     void scheduleUiChangedEvent(const QString &reason, int windowId = -1);
     void sendUiChangedEvent(const QString &reason, int windowId);

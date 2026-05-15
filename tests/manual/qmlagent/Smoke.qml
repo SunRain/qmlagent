@@ -12,12 +12,34 @@ Window {
     property bool subscribedDynamicAdded: false
     property bool genericBlockedClicked: false
     property bool longPressed: false
+    property bool secondaryWindowClicked: false
     property int bindingBase: 70
 
     width: 320
     height: 240
     visible: true
     title: "QmlAgent smoke"
+
+    Window {
+        id: secondaryWindow
+        width: 180
+        height: 120
+        visible: true
+        title: "QmlAgent secondary smoke"
+
+        Rectangle {
+            objectName: root.secondaryWindowClicked ? "smoke.secondaryWindowClicked"
+                                                    : "smoke.secondaryWindowContent"
+            anchors.fill: parent
+            color: root.secondaryWindowClicked ? "#1a7f37" : "#0969da"
+
+            MouseArea {
+                objectName: "smoke.secondaryWindowClickArea"
+                anchors.fill: parent
+                onClicked: root.secondaryWindowClicked = true
+            }
+        }
+    }
 
     Rectangle {
         id: content
@@ -157,6 +179,9 @@ Window {
 
         delegate: Rectangle {
             id: indexedDelegateRow
+            required property int index
+            required property var modelData
+
             x: 8 + index * 74
             y: 48
             width: 66
@@ -185,6 +210,9 @@ Window {
 
         delegate: Text {
             id: indexedTextContainer
+            required property int index
+            required property var modelData
+
             text: modelData.label
             x: 8 + index * 74
             y: 150

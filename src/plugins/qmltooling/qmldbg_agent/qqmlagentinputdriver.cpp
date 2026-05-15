@@ -69,12 +69,28 @@ void QQmlAgentInputDriver::wheel(QQuickWindow *window, const QPointF &windowPoin
 }
 
 void QQmlAgentInputDriver::key(
-        QQuickWindow *window, QEvent::Type type, int key, Qt::KeyboardModifiers modifiers,
+        QQuickWindow *window, QEvent::Type type, int keyCode, Qt::KeyboardModifiers modifiers,
         const QString &text)
 {
     Q_ASSERT(window);
-    QKeyEvent event(type, key, modifiers, text, false, 1);
-    QGuiApplication::sendEvent(window, &event);
+    QQmlAgentInputDriver::key(static_cast<QObject *>(window), type, keyCode, modifiers, text);
+}
+
+void QQmlAgentInputDriver::key(
+        QObject *target, QEvent::Type type, int keyCode, Qt::KeyboardModifiers modifiers,
+        const QString &text)
+{
+    Q_ASSERT(target);
+    QKeyEvent event(type, keyCode, modifiers, text, false, 1);
+    QGuiApplication::sendEvent(target, &event);
+}
+
+void QQmlAgentInputDriver::inputText(QObject *target, const QString &text)
+{
+    Q_ASSERT(target);
+    QInputMethodEvent event;
+    event.setCommitString(text);
+    QGuiApplication::sendEvent(target, &event);
 }
 
 static const QPointingDevice *qmlAgentTouchDevice()
@@ -114,7 +130,10 @@ void QQmlAgentInputDriver::touch(
         QWindowSystemInterface::TouchPoint touchPoint;
         touchPoint.id = point.id;
         touchPoint.state = point.state;
-        touchPoint.pressure = point.state == QEventPoint::State::Released ? 0.0 : 1.0;
+        touchPoint.pressure = (point.state == QEventPoint::State::Pressed
+                               || point.state == QEventPoint::State::Updated)
+                ? 1.0
+                : 0.0;
         touchPoint.area = QRectF(point.globalPoint - QPointF(1, 1), QSizeF(2, 2));
         if (!screenSize.isEmpty()) {
             touchPoint.normalPosition = QPointF(

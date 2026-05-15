@@ -12,6 +12,18 @@ QQmlAgentProtocol::Request QQmlAgentProtocol::parseRequest(const QByteArray &mes
 {
     Request request;
 
+    if (message.size() > MaxInboundMessageBytes) {
+        request.errorCode = -32000;
+        request.errorMessage = QStringLiteral("QmlAgent request payload is too large");
+        request.errorData = {
+            { QStringLiteral("actualBytes"), message.size() },
+            { QStringLiteral("maxBytes"), MaxInboundMessageBytes },
+            { QStringLiteral("hint"),
+              QStringLiteral("Send a smaller JSON-RPC request; use selectors, projection fields, and bounded params.") },
+        };
+        return request;
+    }
+
     QJsonParseError parseError;
     const QJsonDocument document = QJsonDocument::fromJson(message, &parseError);
     if (parseError.error != QJsonParseError::NoError) {

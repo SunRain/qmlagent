@@ -45,7 +45,6 @@
 #include <signal.h>
 #include <unistd.h>
 
-static constexpr int DefaultMcpTargetPort = 3768;
 static constexpr int LauncherControlReplySlackMs = 1000;
 
 using QmlAgentMcp::jsonError;
@@ -53,6 +52,16 @@ using QmlAgentMcp::jsonResponse;
 using QmlAgentMcp::toolErrorResult;
 using QmlAgentMcp::toolList;
 using QmlAgentMcp::toolResult;
+
+static int defaultTcpTargetPort()
+{
+    const QString user = qEnvironmentVariable("USER",
+            qEnvironmentVariable("USERNAME", QStringLiteral("qmlagent")));
+    qsizetype hash = 0;
+    for (QChar ch : user)
+        hash = (hash * 33) + ch.unicode();
+    return 3768 + int(qAbs(hash) % 2000);
+}
 
 class QmlAgentClient : public QQmlDebugClient
 {
@@ -419,6 +428,57 @@ static QString qmlAgentTempRoot()
     return QDir(base).filePath(QStringLiteral("QmlAgent"));
 }
 
+static QFileDevice::Permissions privateDirPermissions()
+{
+    return QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner;
+}
+
+static QFileDevice::Permissions privateFilePermissions()
+{
+    return QFileDevice::ReadOwner | QFileDevice::WriteOwner;
+}
+
+static bool ensurePrivateDirectory(const QString &path, QString *error = nullptr)
+{
+    const QFileInfo before(path);
+    if (before.exists() && (before.isSymLink() || !before.isDir())) {
+        if (error)
+            *error = QStringLiteral("Refusing non-directory or symlink path: %1").arg(path);
+        return false;
+    }
+
+    if (!QDir().mkpath(path)) {
+        if (error)
+            *error = QStringLiteral("Could not create directory: %1").arg(path);
+        return false;
+    }
+
+    const QFileInfo after(path);
+    if (after.isSymLink() || !after.isDir()) {
+        if (error)
+            *error = QStringLiteral("Refusing non-directory or symlink path: %1").arg(path);
+        return false;
+    }
+
+    QFile::setPermissions(path, privateDirPermissions());
+    return true;
+}
+
+static bool pathIsInsideDirectory(const QString &path, const QString &directory)
+{
+    const QString canonicalDirectory = QFileInfo(directory).canonicalFilePath();
+    if (canonicalDirectory.isEmpty())
+        return false;
+
+    const QFileInfo info(path);
+    const QString canonicalParent = info.dir().canonicalPath();
+    if (canonicalParent.isEmpty())
+        return false;
+
+    return canonicalParent == canonicalDirectory
+            || canonicalParent.startsWith(canonicalDirectory + QLatin1Char('/'));
+}
+
 struct LauncherSession
 {
     QString id;
@@ -502,6 +562,11 @@ static QJsonObject readLauncherMailboxResponse(const QString &responsePath, int 
 {
     QDeadlineTimer deadline(timeoutMs);
     while (!deadline.hasExpired()) {
+        if (QFileInfo(responsePath).isSymLink()) {
+            *error = QStringLiteral("Refusing symlinked qmlagent-launcher mailbox response: %1")
+                             .arg(responsePath);
+            return {};
+        }
         QFile responseFile(responsePath);
         if (responseFile.open(QIODevice::ReadOnly)) {
             const QByteArray payload = responseFile.readAll().trimmed();
@@ -533,8 +598,14 @@ static QJsonObject sendLauncherMailboxControlRequest(const QString &mailboxDir, 
         return {};
     }
 
-    if (!QDir().mkpath(mailboxDir)) {
-        *error = QStringLiteral("Could not open qmlagent-launcher control mailbox: %1")
+    if (!ensurePrivateDirectory(mailboxDir, error))
+        return {};
+
+    QLockFile controlLock(QDir(mailboxDir).filePath(QStringLiteral("control.lock")));
+    controlLock.setStaleLockTime(5000);
+    if (!controlLock.tryLock(qMax(0, timeoutMs))) {
+        *error = QStringLiteral("Timed out acquiring qmlagent-launcher control lease for %1. "
+                                "Another agent process may be driving this launcher session.")
                          .arg(mailboxDir);
         return {};
     }
@@ -544,13 +615,22 @@ static QJsonObject sendLauncherMailboxControlRequest(const QString &mailboxDir, 
             QStringLiteral("request-%1.json").arg(token));
     const QString replyDir = QDir(qmlAgentTempRoot()).filePath(
             QStringLiteral("mailbox-replies/%1").arg(qint64(QCoreApplication::applicationPid())));
-    if (!QDir().mkpath(replyDir)) {
-        *error = QStringLiteral("Could not create qmlagent-launcher mailbox reply directory: %1")
-                         .arg(replyDir);
+    if (!ensurePrivateDirectory(qmlAgentTempRoot(), error))
+        return {};
+    if (!ensurePrivateDirectory(QDir(qmlAgentTempRoot()).filePath(QStringLiteral("mailbox-replies")),
+                                error)) {
         return {};
     }
+    if (!ensurePrivateDirectory(replyDir, error))
+        return {};
     const QString responsePath = QDir(replyDir).filePath(
             QStringLiteral("response-%1.json").arg(token));
+
+    if (!pathIsInsideDirectory(requestPath, mailboxDir)
+            || !pathIsInsideDirectory(responsePath, replyDir)) {
+        *error = QStringLiteral("Refusing qmlagent-launcher mailbox path outside private directory.");
+        return {};
+    }
 
     QSaveFile requestFile(requestPath);
     if (!requestFile.open(QIODevice::WriteOnly)) {
@@ -567,6 +647,7 @@ static QJsonObject sendLauncherMailboxControlRequest(const QString &mailboxDir, 
                          .arg(requestPath);
         return {};
     }
+    QFile::setPermissions(requestPath, privateFilePermissions());
 
     return readLauncherMailboxResponse(responsePath, timeoutMs, error);
 }
@@ -2116,7 +2197,7 @@ private:
 
         const int port = arguments.contains(QStringLiteral("port"))
                 ? arguments.value(QStringLiteral("port")).toInt(-1)
-                : DefaultMcpTargetPort;
+                : defaultTcpTargetPort();
         if (port <= 0 || port > 65535) {
             writeMessage(jsonResponse(requestId, toolErrorResult(
                     QStringLiteral("Provide port as an integer between 1 and 65535."))));

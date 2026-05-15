@@ -16,6 +16,7 @@ class tst_QQmlAgentProtocol : public QObject
 private slots:
     void parsesValidRequest();
     void rejectsMalformedJsonAsParseError();
+    void rejectsOversizedRequest();
     void rejectsNonObjectJsonAsInvalidRequest();
     void rejectsInvalidParams();
     void formatsResponse();
@@ -48,6 +49,18 @@ void tst_QQmlAgentProtocol::rejectsMalformedJsonAsParseError()
     QVERIFY(!request.valid);
     QCOMPARE(request.errorCode, -32700);
     QCOMPARE(request.errorMessage, QStringLiteral("Parse error"));
+}
+
+void tst_QQmlAgentProtocol::rejectsOversizedRequest()
+{
+    const QByteArray payload(QQmlAgentProtocol::MaxInboundMessageBytes + 1, ' ');
+    const auto request = QQmlAgentProtocol::parseRequest(payload);
+
+    QVERIFY(!request.valid);
+    QCOMPARE(request.errorCode, -32000);
+    QCOMPARE(request.errorMessage, QStringLiteral("QmlAgent request payload is too large"));
+    QCOMPARE(request.errorData.value(QStringLiteral("maxBytes")).toInt(),
+             QQmlAgentProtocol::MaxInboundMessageBytes);
 }
 
 void tst_QQmlAgentProtocol::rejectsNonObjectJsonAsInvalidRequest()

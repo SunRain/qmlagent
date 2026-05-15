@@ -14,6 +14,9 @@ QT_BEGIN_NAMESPACE
 class QQmlAgentProtocol
 {
 public:
+    static constexpr int MaxInboundMessageBytes = 16 * 1024 * 1024;
+    static constexpr int MaxOutboundMessageBytes = 16 * 1024 * 1024;
+
     struct Request
     {
         bool valid = false;

@@ -51,6 +51,7 @@ private:
     QtMessageHandler m_previousHandler = nullptr;
 
     static QQmlAgentLogCollector *s_activeCollector;
+    static QMutex s_handlerMutex;
 };
 
 QT_END_NAMESPACE
