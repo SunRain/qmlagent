@@ -54,6 +54,32 @@ static bool itemInsideViewport(const QQuickItem *item)
     return QRectF(QPointF(0, 0), item->window()->size()).contains(itemBoxInWindow(item));
 }
 
+static QJsonObject itemViewportState(const QQuickItem *item)
+{
+    if (!item || !item->window()) {
+        return {
+            { QStringLiteral("available"), false },
+            { QStringLiteral("fullyInside"), false },
+            { QStringLiteral("partiallyInside"), false },
+            { QStringLiteral("centerInside"), false },
+        };
+    }
+
+    const QRectF bbox = itemBoxInWindow(item);
+    const QRectF viewport(QPointF(0, 0), item->window()->size());
+    const QRectF intersection = bbox.intersected(viewport);
+    return {
+        { QStringLiteral("available"), true },
+        { QStringLiteral("viewport"), rectArray(viewport) },
+        { QStringLiteral("bbox"), rectArray(bbox) },
+        { QStringLiteral("visibleRect"), rectArray(intersection) },
+        { QStringLiteral("fullyInside"), viewport.contains(bbox) },
+        { QStringLiteral("partiallyInside"), !intersection.isEmpty() },
+        { QStringLiteral("centerInside"), viewport.contains(bbox.center()) },
+        { QStringLiteral("clippedByViewport"), !intersection.isEmpty() && !viewport.contains(bbox) },
+    };
+}
+
 static QString prettyTypeName(QObject *object)
 {
     const QString qmlType = QQmlMetaType::prettyTypeName(object);
@@ -610,6 +636,7 @@ static QJsonObject nodeForObjectInternal(QObject *object, int windowId, int dept
         insertField(&node, options, QStringLiteral("opacity"), item->opacity());
         insertField(&node, options, QStringLiteral("bbox"), rectArray(itemBoxInWindow(item)));
         insertField(&node, options, QStringLiteral("insideViewport"), itemInsideViewport(item));
+        insertField(&node, options, QStringLiteral("viewport"), itemViewportState(item));
         const QJsonObject interactable = QQmlAgentActionability::state(object);
         insertField(&node, options, QStringLiteral("actionable"),
                     interactable.value(QStringLiteral("ok")).toBool());
@@ -1923,6 +1950,7 @@ QJsonObject QQmlAgentUiTree::getBoxModel(const QJsonObject &params)
         { QStringLiteral("bbox"), rectArray(itemBoxInWindow(item)) },
         { QStringLiteral("viewport"), rectArray(QRectF(QPointF(0, 0), item->window()->size())) },
         { QStringLiteral("insideViewport"), itemInsideViewport(item) },
+        { QStringLiteral("viewportState"), itemViewportState(item) },
     };
 }
 

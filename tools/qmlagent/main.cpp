@@ -853,6 +853,7 @@ static void printCallHelp()
         QStringLiteral("Diagnostics.analyzeTree"),
         QStringLiteral("Diagnostics.analyzeBinding"),
         QStringLiteral("Input.clickNode"),
+        QStringLiteral("Input.longPressNode"),
         QStringLiteral("Input.wheel"),
         QStringLiteral("Input.focusNode"),
         QStringLiteral("Input.dispatchMouseEvent"),
@@ -885,6 +886,7 @@ static int runCtlSubcommand(const QStringList &arguments)
                 << "  qmlagentctl query <selector> [--property name] [--format compact|pretty]\n"
                 << "  qmlagentctl binding <selector> --property name [--format compact|pretty]\n"
                 << "  qmlagentctl click <selector>\n"
+                << "  qmlagentctl long-press <selector> [--hold-ms ms]\n"
                 << "  qmlagentctl type <selector> --text value\n"
                 << "  qmlagentctl clear-text <selector>\n"
                 << "  qmlagentctl wait <selector> --state found|notFound [--timeout ms]\n"
@@ -929,6 +931,7 @@ static int runCtlSubcommand(const QStringList &arguments)
         QStringLiteral("inspect"),
         QStringLiteral("binding"),
         QStringLiteral("click"),
+        QStringLiteral("long-press"),
         QStringLiteral("type"),
         QStringLiteral("clear-text"),
         QStringLiteral("wait"),
@@ -1022,6 +1025,19 @@ static int runCtlSubcommand(const QStringList &arguments)
                 return fail(QStringLiteral("qmlagentctl click requires a selector."));
             method = QStringLiteral("Input.clickNode");
             params = { { QStringLiteral("selector"), arguments.at(2) } };
+        } else if (command == QLatin1String("long-press")) {
+            if (arguments.size() < 3)
+                return fail(QStringLiteral("qmlagentctl long-press requires a selector."));
+            bool holdOk = false;
+            const int holdMs = argumentValue(arguments, QStringLiteral("--hold-ms"),
+                                             QStringLiteral("900")).toInt(&holdOk);
+            if (!holdOk || holdMs <= 0)
+                return fail(QStringLiteral("--hold-ms must be a positive integer."));
+            method = QStringLiteral("Input.longPressNode");
+            params = {
+                { QStringLiteral("selector"), arguments.at(2) },
+                { QStringLiteral("holdMs"), holdMs },
+            };
         } else if (command == QLatin1String("type")) {
             if (arguments.size() < 3)
                 return fail(QStringLiteral("qmlagentctl type requires a selector."));
@@ -1259,7 +1275,8 @@ static QJsonObject groupedWorkflowReport(const QString &kind,
     return report;
 }
 
-static QJsonObject clickAndWaitWorkflowReport(const QString &targetSelector,
+static QJsonObject clickAndWaitWorkflowReport(const QString &kind,
+                                              const QString &targetSelector,
                                               const QString &waitSelector,
                                               const QJsonObject &until,
                                               const QJsonObject &targetQuery,
@@ -1308,7 +1325,7 @@ static QJsonObject clickAndWaitWorkflowReport(const QString &targetSelector,
     }
 
     return {
-        { QStringLiteral("kind"), QStringLiteral("click-and-wait") },
+        { QStringLiteral("kind"), kind },
         { QStringLiteral("targetSelector"), targetSelector },
         { QStringLiteral("waitSelector"), waitSelector },
         { QStringLiteral("until"), until },
@@ -1351,6 +1368,7 @@ private:
             TargetCommand,
             WorkflowClick,
             WorkflowClickAndWait,
+            WorkflowLongPressAndWait,
             WorkflowKey,
             Disconnect,
         };
@@ -1365,6 +1383,7 @@ private:
         QString waitSelector;
         QJsonObject waitUntil;
         int waitTimeoutMs = -1;
+        int holdMs = 900;
         QString key;
         QString verbosity;
         Expectation expectation;
@@ -1430,6 +1449,7 @@ private:
                 QStringLiteral("text"),
                 QStringLiteral("bbox"),
                 QStringLiteral("insideViewport"),
+                QStringLiteral("viewport"),
                 QStringLiteral("actionable"),
             }) },
             { QStringLiteral("maxNodes"), arguments.value(QStringLiteral("maxNodes")).toInt(500) },
@@ -1457,6 +1477,7 @@ private:
                 QStringLiteral("text"),
                 QStringLiteral("bbox"),
                 QStringLiteral("insideViewport"),
+                QStringLiteral("viewport"),
                 QStringLiteral("actionable"),
                 QStringLiteral("sourceLocation"),
             }) },
@@ -1483,6 +1504,7 @@ private:
     {
         if (name != QLatin1String("qmlagent.workflow_click")
                 && name != QLatin1String("qmlagent.workflow_click_and_wait")
+                && name != QLatin1String("qmlagent.workflow_long_press_and_wait")
                 && name != QLatin1String("qmlagent.workflow_key")) {
             return false;
         }
@@ -1491,13 +1513,16 @@ private:
             call->kind = PendingCall::Kind::WorkflowClick;
         else if (name == QLatin1String("qmlagent.workflow_click_and_wait"))
             call->kind = PendingCall::Kind::WorkflowClickAndWait;
+        else if (name == QLatin1String("qmlagent.workflow_long_press_and_wait"))
+            call->kind = PendingCall::Kind::WorkflowLongPressAndWait;
         else
             call->kind = PendingCall::Kind::WorkflowKey;
         if (!requireStringArgument(arguments, QStringLiteral("selector"),
                                    &call->targetSelector, error)) {
             return true;
         }
-        if (call->kind == PendingCall::Kind::WorkflowClickAndWait) {
+        if (call->kind == PendingCall::Kind::WorkflowClickAndWait
+                || call->kind == PendingCall::Kind::WorkflowLongPressAndWait) {
             if (!requireStringArgument(arguments, QStringLiteral("waitSelector"),
                                        &call->waitSelector, error)) {
                 return true;
@@ -1509,6 +1534,8 @@ private:
             }
             if (arguments.contains(QStringLiteral("timeoutMs")))
                 call->waitTimeoutMs = arguments.value(QStringLiteral("timeoutMs")).toInt(-1);
+            if (call->kind == PendingCall::Kind::WorkflowLongPressAndWait)
+                call->holdMs = arguments.value(QStringLiteral("holdMs")).toInt(900);
             call->verbosity = arguments.value(QStringLiteral("verbosity")).toString(QStringLiteral("summary"));
             return true;
         }
@@ -1625,6 +1652,21 @@ private:
             *targetMethod = QStringLiteral("Input.clickNode");
             *targetParams = nodeRef(arguments, error);
             return error->isEmpty();
+        }
+        if (name == QLatin1String("qmlagent.input_long_press")) {
+            *targetMethod = QStringLiteral("Input.longPressNode");
+            *targetParams = nodeRef(arguments, error);
+            if (!error->isEmpty())
+                return false;
+            for (const QString &key : { QStringLiteral("holdMs"),
+                                        QStringLiteral("button"),
+                                        QStringLiteral("point"),
+                                        QStringLiteral("modifiers"),
+                                        QStringLiteral("settle") }) {
+                if (arguments.contains(key))
+                    targetParams->insert(key, arguments.value(key));
+            }
+            return true;
         }
         if (name == QLatin1String("qmlagent.input_wheel")) {
             *targetMethod = QStringLiteral("Input.wheel");
@@ -2126,6 +2168,7 @@ private:
             { QStringLiteral("inspect"), QStringLiteral("qmlagent.ui_query") },
             { QStringLiteral("tree"), QStringLiteral("qmlagent.ui_get_tree") },
             { QStringLiteral("click"), QStringLiteral("qmlagent.input_click") },
+            { QStringLiteral("longPress"), QStringLiteral("qmlagent.input_long_press") },
             { QStringLiteral("dragSliderHandleSwipe"),
               QStringLiteral("qmlagent.input_drag") },
             { QStringLiteral("scrollFlickableListViewGridViewTableViewTreeView"),
@@ -2134,6 +2177,8 @@ private:
               QStringLiteral("qmlagent.ui_wait_for") },
             { QStringLiteral("clickAndWaitForDrawerMenuPopupDialogLoaderTransition"),
               QStringLiteral("qmlagent.workflow_click_and_wait") },
+            { QStringLiteral("longPressAndWaitForContextMenuAlternateAction"),
+              QStringLiteral("qmlagent.workflow_long_press_and_wait") },
             { QStringLiteral("immediateClickVerification"),
               QStringLiteral("qmlagent.workflow_click") },
             { QStringLiteral("keyboardWorkflow"), QStringLiteral("qmlagent.workflow_key") },
@@ -2143,6 +2188,8 @@ private:
               QStringLiteral("Use structural tools first: ui_query/ui_get_tree, diagnostics, source, logs, input/workflow verification. qmlagent.render_capture_screenshot and qmlagentctl screenshot are fallback evidence after structured evidence is insufficient or the task is explicitly visual. Use scale/region or qmlagentctl --out to keep image bytes out of agent context.") },
             { QStringLiteral("toolSearchHints"), QJsonArray{
                 QStringLiteral("qmlagent.workflow_click_and_wait Drawer Popup Dialog ComboBox QQuickPopupItem transition wait"),
+                QStringLiteral("qmlagent.workflow_long_press_and_wait long press press-and-hold MouseArea onPressAndHold context menu alternate action"),
+                QStringLiteral("qmlagent.input_long_press press-and-hold long press"),
                 QStringLiteral("qmlagent.ui_wait_for wait until selector found property visible"),
                 QStringLiteral("qmlagent.ui_query popup contents ItemDelegate MenuItem visible choices"),
                 QStringLiteral("qmlagent.input_drag Slider RangeSlider Dial handle drag"),
@@ -2153,6 +2200,8 @@ private:
             { QStringLiteral("fallbacks"), QJsonObject{
                 { QStringLiteral("workflow_click_and_wait_missing"),
                   QStringLiteral("Use qmlagent.input_click followed by qmlagent.ui_wait_for.") },
+                { QStringLiteral("workflow_long_press_and_wait_missing"),
+                  QStringLiteral("Use qmlagent.input_long_press followed by qmlagent.ui_wait_for.") },
                 { QStringLiteral("visualEvidenceNeeded"),
                   QStringLiteral("Use qmlagent.render_capture_screenshot only after structured runtime evidence is insufficient; default output omits PNG data. If includeData:true is necessary, pass scale and/or region.") },
             } },
@@ -2206,7 +2255,7 @@ private:
         }
         if (!isTargetConnected()) {
             status.insert(QStringLiteral("nextStep"), reachableLauncherCount == 1
-                    ? QStringLiteral("A single qmlagent-launcher gateway is available. Call target-backed request/response tools such as qmlagent.ui_query, qmlagent.ui_wait_for, qmlagent.input_click, qmlagent.input_drag, qmlagent.input_wheel, qmlagent.preview_reload, or workflow tools directly. Use qmlagent.connect_tcp/connect_local_socket only for manually launched targets or streamed subscriptions.")
+                    ? QStringLiteral("A single qmlagent-launcher gateway is available. Call target-backed request/response tools such as qmlagent.ui_query, qmlagent.ui_wait_for, qmlagent.input_click, qmlagent.input_long_press, qmlagent.input_drag, qmlagent.input_wheel, qmlagent.preview_reload, or workflow tools directly. Use qmlagent.connect_tcp/connect_local_socket only for manually launched targets or streamed subscriptions.")
                     : notConnectedMessage());
         }
         status.insert(QStringLiteral("attachTools"), QJsonObject{
@@ -2358,7 +2407,8 @@ private:
         const QJsonArray events;
         const QJsonArray properties{ call.expectation.property };
         QJsonObject beforeQuery;
-        if (call.kind != PendingCall::Kind::WorkflowClickAndWait) {
+        if (call.kind != PendingCall::Kind::WorkflowClickAndWait
+                && call.kind != PendingCall::Kind::WorkflowLongPressAndWait) {
             if (!launcherWorkflowRequest(launcher, QStringLiteral("UI.query"), {
                     { QStringLiteral("selector"), call.expectedSelector },
                     { QStringLiteral("includeSource"), true },
@@ -2386,6 +2436,18 @@ private:
                 }, true)));
                 return;
             }
+        } else if (call.kind == PendingCall::Kind::WorkflowLongPressAndWait) {
+            if (!launcherWorkflowRequest(launcher, QStringLiteral("Input.longPressNode"), {
+                    { QStringLiteral("selector"), call.targetSelector },
+                    { QStringLiteral("holdMs"), call.holdMs },
+                }, &input, &error)) {
+                writeMessage(jsonResponse(requestId, toolResult(QJsonObject{
+                    { QStringLiteral("error"), error },
+                    { QStringLiteral("phase"), QStringLiteral("input") },
+                    { QStringLiteral("targetResponse"), input },
+                }, true)));
+                return;
+            }
         } else {
             if (!launcherWorkflowRequest(launcher, QStringLiteral("Input.dispatchKeyEvent"), {
                     { QStringLiteral("selector"), call.targetSelector },
@@ -2400,7 +2462,8 @@ private:
             }
         }
 
-        if (call.kind == PendingCall::Kind::WorkflowClickAndWait) {
+        if (call.kind == PendingCall::Kind::WorkflowClickAndWait
+                || call.kind == PendingCall::Kind::WorkflowLongPressAndWait) {
             QJsonObject waitParams{
                 { QStringLiteral("selector"), call.waitSelector },
                 { QStringLiteral("until"), call.waitUntil },
@@ -2419,7 +2482,11 @@ private:
                 return;
             }
 
-            QJsonObject report = clickAndWaitWorkflowReport(call.targetSelector,
+            const QString kind = call.kind == PendingCall::Kind::WorkflowLongPressAndWait
+                    ? QStringLiteral("long-press-and-wait")
+                    : QStringLiteral("click-and-wait");
+            QJsonObject report = clickAndWaitWorkflowReport(kind,
+                                                            call.targetSelector,
                                                             call.waitSelector,
                                                             call.waitUntil,
                                                             targetQuery,
@@ -2874,7 +2941,8 @@ private:
         switch (m_workflow->phase) {
         case WorkflowState::Phase::TargetQuery:
             m_workflow->targetQuery = response;
-            if (call.kind == PendingCall::Kind::WorkflowClickAndWait) {
+            if (call.kind == PendingCall::Kind::WorkflowClickAndWait
+                    || call.kind == PendingCall::Kind::WorkflowLongPressAndWait) {
                 if (m_workflow->subscribedBefore) {
                     sendWorkflowInput();
                     return;
@@ -2903,7 +2971,8 @@ private:
             return;
         case WorkflowState::Phase::Input:
             m_workflow->input = response;
-            if (call.kind == PendingCall::Kind::WorkflowClickAndWait) {
+            if (call.kind == PendingCall::Kind::WorkflowClickAndWait
+                    || call.kind == PendingCall::Kind::WorkflowLongPressAndWait) {
                 QJsonObject waitParams{
                     { QStringLiteral("selector"), call.waitSelector },
                     { QStringLiteral("until"), call.waitUntil },
@@ -2956,6 +3025,13 @@ private:
             });
             return;
         }
+        if (call.kind == PendingCall::Kind::WorkflowLongPressAndWait) {
+            sendWorkflowRequest(WorkflowState::Phase::Input, QStringLiteral("Input.longPressNode"), {
+                { QStringLiteral("selector"), call.targetSelector },
+                { QStringLiteral("holdMs"), call.holdMs },
+            });
+            return;
+        }
 
         sendWorkflowRequest(WorkflowState::Phase::Input, QStringLiteral("Input.dispatchKeyEvent"), {
             { QStringLiteral("selector"), call.targetSelector },
@@ -2969,8 +3045,13 @@ private:
             return;
 
         const PendingCall call = m_workflow->call;
-        if (call.kind == PendingCall::Kind::WorkflowClickAndWait) {
-            const QJsonObject report = clickAndWaitWorkflowReport(call.targetSelector,
+        if (call.kind == PendingCall::Kind::WorkflowClickAndWait
+                || call.kind == PendingCall::Kind::WorkflowLongPressAndWait) {
+            const QString kind = call.kind == PendingCall::Kind::WorkflowLongPressAndWait
+                    ? QStringLiteral("long-press-and-wait")
+                    : QStringLiteral("click-and-wait");
+            const QJsonObject report = clickAndWaitWorkflowReport(kind,
+                                                                  call.targetSelector,
                                                                   call.waitSelector,
                                                                   call.waitUntil,
                                                                   m_workflow->targetQuery,

@@ -54,8 +54,8 @@ void tst_QQmlAgentInput::clickNodeFailureReasons_data()
                               << QStringLiteral("disabled");
     QTest::newRow("zero_size") << QStringLiteral("zeroSizeItem")
                                << QStringLiteral("zero_size");
-    QTest::newRow("no_window") << QStringLiteral("windowlessItem")
-                               << QStringLiteral("no_window");
+    QTest::newRow("unknown_window") << QStringLiteral("windowlessItem")
+                                    << QStringLiteral("unknown_window");
 }
 
 void tst_QQmlAgentInput::clickNodeFailureReasons()

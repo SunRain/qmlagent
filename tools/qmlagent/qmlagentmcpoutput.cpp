@@ -19,6 +19,7 @@ static QJsonObject summarizedNode(const QJsonObject &node)
              QStringLiteral("enabled"),
              QStringLiteral("bbox"),
              QStringLiteral("insideViewport"),
+             QStringLiteral("viewport"),
              QStringLiteral("sourceLocation"),
              QStringLiteral("properties"),
              QStringLiteral("frameworkInternal"),

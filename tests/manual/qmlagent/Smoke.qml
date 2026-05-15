@@ -11,6 +11,7 @@ Window {
     property int selectedDelegateIndex: -1
     property bool subscribedDynamicAdded: false
     property bool genericBlockedClicked: false
+    property bool longPressed: false
     property int bindingBase: 70
 
     width: 320
@@ -474,6 +475,34 @@ Window {
         width: 24
         height: 24
         color: "#cf222e"
+    }
+
+    Rectangle {
+        x: -20
+        y: 180
+        width: 60
+        height: 60
+        color: "#bf8700"
+
+        MouseArea {
+            objectName: "smoke.partiallyVisiblePressArea"
+            anchors.fill: parent
+        }
+    }
+
+    Rectangle {
+        objectName: root.longPressed ? "smoke.longPressed" : "smoke.longPressTarget"
+        x: 70
+        y: 180
+        width: 80
+        height: 40
+        color: root.longPressed ? "#2f7d32" : "#8250df"
+
+        MouseArea {
+            objectName: "smoke.longPressArea"
+            anchors.fill: parent
+            onPressAndHold: root.longPressed = true
+        }
     }
 
     ValueTypeItem {

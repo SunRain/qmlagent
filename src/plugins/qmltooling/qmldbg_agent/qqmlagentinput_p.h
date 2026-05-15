@@ -12,6 +12,7 @@ class QQmlAgentInput
 {
 public:
     static QJsonObject clickNode(const QJsonObject &params);
+    static QJsonObject longPressNode(const QJsonObject &params);
     static QJsonObject wheel(const QJsonObject &params);
     static QJsonObject focusNode(const QJsonObject &params);
     static QJsonObject dispatchMouseEvent(const QJsonObject &params);

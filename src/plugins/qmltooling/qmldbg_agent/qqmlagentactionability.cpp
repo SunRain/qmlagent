@@ -3,6 +3,8 @@
 
 #include "qqmlagentactionability_p.h"
 
+#include <QtCore/qjsonarray.h>
+#include <QtCore/qjsonobject.h>
 #include <QtCore/qobject.h>
 #include <QtCore/qset.h>
 #include <QtCore/qstringlist.h>
@@ -27,6 +29,44 @@ static QRectF itemBoxInWindow(const QQuickItem *item)
     if (!item)
         return {};
     return item->mapRectToScene(QRectF(QPointF(0, 0), QSizeF(item->width(), item->height())));
+}
+
+static QJsonArray pointArray(const QPointF &point)
+{
+    return { point.x(), point.y() };
+}
+
+static QJsonArray rectArray(const QRectF &rect)
+{
+    return { rect.x(), rect.y(), rect.width(), rect.height() };
+}
+
+static QJsonObject viewportStateForPoint(const QQuickItem *item, const QPointF &actionPoint)
+{
+    if (!item || !item->window()) {
+        return {
+            { QStringLiteral("available"), false },
+            { QStringLiteral("actionPointInside"), false },
+            { QStringLiteral("fullyInside"), false },
+            { QStringLiteral("partiallyInside"), false },
+        };
+    }
+
+    const QRectF bbox = itemBoxInWindow(item);
+    const QRectF viewport(QPointF(0, 0), item->window()->size());
+    const QRectF intersection = bbox.intersected(viewport);
+    return {
+        { QStringLiteral("available"), true },
+        { QStringLiteral("viewport"), rectArray(viewport) },
+        { QStringLiteral("bbox"), rectArray(bbox) },
+        { QStringLiteral("visibleRect"), rectArray(intersection) },
+        { QStringLiteral("actionPoint"), pointArray(actionPoint) },
+        { QStringLiteral("actionPointInside"), viewport.contains(actionPoint) },
+        { QStringLiteral("fullyInside"), viewport.contains(bbox) },
+        { QStringLiteral("partiallyInside"), !intersection.isEmpty() },
+        { QStringLiteral("centerInside"), viewport.contains(bbox.center()) },
+        { QStringLiteral("clippedByViewport"), !intersection.isEmpty() && !viewport.contains(bbox) },
+    };
 }
 
 static QString objectLabel(const QObject *object)
@@ -238,9 +278,6 @@ static QJsonArray reasonsForObject(QObject *object, const QPointF *scenePoint)
         return reasons;
     }
 
-    if (!item->window())
-        appendReason(&reasons, QStringLiteral("no_window"),
-                     { QStringLiteral("target has no QQuickWindow") });
     if (!item->isVisible())
         appendReason(&reasons, QStringLiteral("not_visible"),
                      { QStringLiteral("visible=false") });
@@ -311,6 +348,10 @@ static QJsonArray reasonsForObject(QObject *object, const QPointF *scenePoint)
         }
     }
 
+    if (!item->window())
+        appendReason(&reasons, QStringLiteral("no_window"),
+                     { QStringLiteral("target has no QQuickWindow") });
+
     for (QQuickItem *ancestor = item->parentItem(); ancestor; ancestor = ancestor->parentItem()) {
         if (ancestor->opacity() <= 0.01) {
             appendReason(&reasons, QStringLiteral("opacity_zero_ancestor"),
@@ -336,7 +377,7 @@ QJsonArray QQmlAgentActionability::reasonsAtPoint(QObject *object, const QPointF
 QJsonObject QQmlAgentActionability::state(QObject *object)
 {
     const QJsonArray reasonArray = reasons(object);
-    return {
+    QJsonObject result{
         { QStringLiteral("ok"), reasonArray.isEmpty() },
         { QStringLiteral("reasons"), reasonArray },
         { QStringLiteral("confidence"), reasonArray.isEmpty() ? 0.85 : 1.0 },
@@ -346,6 +387,11 @@ QJsonObject QQmlAgentActionability::state(QObject *object)
             QStringLiteral("Qt Quick Controls modal popup blocking is refined through the overlay stack"),
         } },
     };
+    if (QQuickItem *item = qobject_cast<QQuickItem *>(object)) {
+        const QRectF bbox = itemBoxInWindow(item);
+        result.insert(QStringLiteral("viewport"), viewportStateForPoint(item, bbox.center()));
+    }
+    return result;
 }
 
 QT_END_NAMESPACE

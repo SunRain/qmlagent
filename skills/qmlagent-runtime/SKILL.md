@@ -93,6 +93,7 @@ available:
 "$QT_BIN/qmlagentctl" query 'id="saveButton"' --property text --format compact
 "$QT_BIN/qmlagentctl" wait 'id="detailsPopup"' --state found --timeout 1000
 "$QT_BIN/qmlagentctl" click 'id="saveButton"'
+"$QT_BIN/qmlagentctl" long-press 'id="contextButton"' --hold-ms 900
 "$QT_BIN/qmlagentctl" clear-text 'id="urlField"'
 "$QT_BIN/qmlagentctl" type 'id="urlField"' --text 'go.dev'
 "$QT_BIN/qmlagentctl" binding 'id="saveButton"' --property y --format compact
@@ -128,6 +129,9 @@ base64 does not enter the agent context. For MCP screenshot bytes, pass
   `qmlagentctl type`, then verify with `UI.query` or `UI.waitFor`.
 - Use input/workflow results plus `UI.query`, diagnostics, logs, or source
   evidence as proof. Runtime mutation is setup-only.
+- Use `qmlagent.input_long_press` or `qmlagent.workflow_long_press_and_wait`
+  for press-and-hold UI. Do not hand-roll mousePress + sleep + mouseRelease
+  unless debugging the input primitive itself.
 - If QML fails to load, inspect logs/status first. A dead process cannot answer
   `UI.*` queries.
 - Keep one active workflow owner per target session; multiple agents can race

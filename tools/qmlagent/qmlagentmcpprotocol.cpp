@@ -231,6 +231,20 @@ QJsonArray toolList()
         tool(QStringLiteral("qmlagent.input_click"),
              QStringLiteral("Click one node through Qt synthetic input. Completion includes QmlAgent settle metadata. For transitions, Drawer/Menu/Popup/Dialog open-close, loaders, or async state, prefer qmlagent.workflow_click_and_wait; if that tool is not visible in lazy native-tool discovery, call qmlagent.input_click then qmlagent.ui_wait_for."),
              schema(withNodeRef({}))),
+        tool(QStringLiteral("qmlagent.input_long_press"),
+             QStringLiteral("Long-press one node through Qt synthetic mouse input as one atomic action: press, hold, release cleanup, then settle. Use for MouseArea.onPressAndHold, context actions, press-and-hold affordances, and mobile-style UI. Prefer this over manual qmlagent.input_mouse press/wait/release sequences so agents do not leave a held button after interruption. Verify post-action state with qmlagent.ui_wait_for or use qmlagent.workflow_long_press_and_wait."),
+             schema(withNodeRef({
+                 { QStringLiteral("holdMs"), QJsonObject{
+                     { QStringLiteral("type"), QStringLiteral("integer") },
+                     { QStringLiteral("description"), QStringLiteral("Hold duration in milliseconds. Defaults to 900.") },
+                 } },
+                 { QStringLiteral("button"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("string") } } },
+                 { QStringLiteral("point"), QJsonObject{
+                     { QStringLiteral("type"), QStringLiteral("array") },
+                     { QStringLiteral("items"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("number") } } },
+                 } },
+                 { QStringLiteral("modifiers"), stringArray },
+             }))),
         tool(QStringLiteral("qmlagent.input_wheel"),
              QStringLiteral("Dispatch one wheel event at a selector/node center through Qt synthetic input. Use negative deltaY to scroll down in normal Qt Quick Flickable/ListView/GridView/TableView/TreeView/ScrollView content. After scrolling, verify with qmlagent.ui_wait_for or qmlagent.ui_query."),
              schema(withNodeRef({
@@ -375,6 +389,31 @@ QJsonArray toolList()
                      { QStringLiteral("description"), QStringLiteral("Selector whose state/property should satisfy the wait predicate after the click.") },
                  } },
                  { QStringLiteral("until"), waitUntilSchema() },
+                 { QStringLiteral("timeoutMs"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("integer") } } },
+                 { QStringLiteral("verbosity"), QJsonObject{
+                     { QStringLiteral("type"), QStringLiteral("string") },
+                     { QStringLiteral("enum"), QJsonArray{
+                         QStringLiteral("full"),
+                         QStringLiteral("summary"),
+                     } },
+                 } },
+             }, { QStringLiteral("selector"), QStringLiteral("waitSelector"), QStringLiteral("until") })),
+        tool(QStringLiteral("qmlagent.workflow_long_press_and_wait"),
+             QStringLiteral("Agent-first compressed workflow for press-and-hold UI: long-press a target selector, release safely, then UI.waitFor a semantic predicate in one report. Use for MouseArea.onPressAndHold, context menus, mobile-style alternate actions, and hidden affordances. Prefer this over qmlagent.input_mouse press + sleep + release."),
+             schema({
+                 { QStringLiteral("selector"), QJsonObject{
+                     { QStringLiteral("type"), QStringLiteral("string") },
+                     { QStringLiteral("description"), QStringLiteral("Target selector to long-press.") },
+                 } },
+                 { QStringLiteral("waitSelector"), QJsonObject{
+                     { QStringLiteral("type"), QStringLiteral("string") },
+                     { QStringLiteral("description"), QStringLiteral("Selector whose state/property should satisfy the wait predicate after the long press.") },
+                 } },
+                 { QStringLiteral("until"), waitUntilSchema() },
+                 { QStringLiteral("holdMs"), QJsonObject{
+                     { QStringLiteral("type"), QStringLiteral("integer") },
+                     { QStringLiteral("description"), QStringLiteral("Hold duration in milliseconds. Defaults to 900.") },
+                 } },
                  { QStringLiteral("timeoutMs"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("integer") } } },
                  { QStringLiteral("verbosity"), QJsonObject{
                      { QStringLiteral("type"), QStringLiteral("string") },

@@ -85,6 +85,39 @@ static QJsonObject failure(const QString &reason, int nodeId, const QJsonArray &
     };
 }
 
+static QJsonObject longPressFailure(const QString &reason, int nodeId, const QJsonArray &evidence)
+{
+    const QString message = [reason]() {
+        if (reason == QLatin1String("invalid_duration"))
+            return QStringLiteral("Long press duration must be between 1 and 10000 milliseconds.");
+        if (reason == QLatin1String("invalid_button"))
+            return QStringLiteral("Long press input uses an unsupported button name.");
+        if (reason == QLatin1String("node_not_found"))
+            return QStringLiteral("Node does not exist in this session.");
+        if (reason == QLatin1String("not_qquickitem"))
+            return QStringLiteral("Node is not a QQuickItem.");
+        const QString actionabilityMessage = actionabilityFailureMessage(reason);
+        if (!actionabilityMessage.isEmpty())
+            return actionabilityMessage;
+        if (reason == QLatin1String("point_outside_viewport"))
+            return QStringLiteral("Long press point is outside the viewport.");
+        return QStringLiteral("Long press input cannot be delivered to this node.");
+    }();
+
+    return {
+        { QStringLiteral("delivered"), false },
+        { QStringLiteral("reason"), reason },
+        { QStringLiteral("diagnostics"), QJsonArray{ QJsonObject{
+            { QStringLiteral("id"), QStringLiteral("input.not_long_pressable") },
+            { QStringLiteral("severity"), QStringLiteral("error") },
+            { QStringLiteral("confidence"), 1.0 },
+            { QStringLiteral("nodeId"), nodeId },
+            { QStringLiteral("message"), message },
+            { QStringLiteral("evidence"), evidence },
+        } } },
+    };
+}
+
 static QJsonObject failureWithDiagnostics(const QString &reason, const QJsonArray &diagnostics)
 {
     return {
@@ -102,7 +135,10 @@ static QJsonObject inputFailureFromActionability(
         return {};
 
     const QJsonObject reason = reasons.at(0).toObject();
-    return failureFactory(reason.value(QStringLiteral("id")).toString(QStringLiteral("not_actionable")),
+    QString reasonId = reason.value(QStringLiteral("id")).toString(QStringLiteral("not_actionable"));
+    if (reasonId == QLatin1String("no_window"))
+        reasonId = QStringLiteral("unknown_window");
+    return failureFactory(reasonId,
                           nodeId, reason.value(QStringLiteral("evidence")).toArray());
 }
 
@@ -662,6 +698,90 @@ QJsonObject QQmlAgentInput::clickNode(const QJsonObject &params)
         { QStringLiteral("delivered"), true },
         { QStringLiteral("node"), ref.node },
         { QStringLiteral("point"), QJsonArray{ center.x(), center.y() } },
+        { QStringLiteral("mode"), QQmlAgentInputDriver::mode() },
+        { QStringLiteral("settle"), settle },
+    };
+}
+
+QJsonObject QQmlAgentInput::longPressNode(const QJsonObject &params)
+{
+    const int holdMs = params.value(QStringLiteral("holdMs")).toInt(900);
+    if (holdMs < 1 || holdMs > 10000)
+        return longPressFailure(QStringLiteral("invalid_duration"), -1,
+                                { QStringLiteral("holdMs=%1").arg(holdMs) });
+
+    bool buttonOk = false;
+    const Qt::MouseButton button = mouseButtonFromString(
+            params.value(QStringLiteral("button")).toString(QStringLiteral("left")), &buttonOk);
+    if (!buttonOk || button == Qt::NoButton)
+        return longPressFailure(QStringLiteral("invalid_button"), -1,
+                                { QStringLiteral("button must be left, right, middle, back, or forward") });
+
+    const QQmlAgentUiTree::NodeRef ref = QQmlAgentUiTree::resolveNodeRef(params);
+    if (!ref.issues.isEmpty())
+        return failureWithDiagnostics(ref.failureReason, ref.issues);
+
+    const int nodeId = ref.nodeId;
+    QObject *object = ref.object;
+    QQuickItem *item = qobject_cast<QQuickItem *>(object);
+    if (!object)
+        return longPressFailure(QStringLiteral("node_not_found"), nodeId, { QStringLiteral("node_not_found") });
+    if (!item)
+        return longPressFailure(QStringLiteral("not_qquickitem"), nodeId, { QStringLiteral("not_qquickitem") });
+
+    QQuickWindow *window = item->window();
+    if (!window)
+        return longPressFailure(QStringLiteral("unknown_window"), nodeId, { QStringLiteral("window=null") });
+
+    const QPointF itemPoint = hasPointParam(params, QStringLiteral("point"))
+            ? pointFFromParams(params, QStringLiteral("point"))
+            : QPointF(item->width() / 2, item->height() / 2);
+    const QPointF windowPoint = item->mapToScene(itemPoint);
+    const QRectF viewport(QPointF(0, 0), window->size());
+    if (!viewport.contains(windowPoint)) {
+        return longPressFailure(QStringLiteral("point_outside_viewport"), nodeId,
+                                { QStringLiteral("point=[%1,%2]").arg(windowPoint.x()).arg(windowPoint.y()),
+                                  QStringLiteral("viewport=[0,0,%1,%2]").arg(viewport.width()).arg(viewport.height()) });
+    }
+
+    const QJsonArray actionabilityReasons =
+            QQmlAgentActionability::reasonsAtPoint(object, windowPoint);
+    if (!actionabilityReasons.isEmpty())
+        return inputFailureFromActionability(actionabilityReasons, nodeId, longPressFailure);
+
+    const Qt::KeyboardModifiers modifiers = modifiersFromParams(params);
+    int framesDuringHold = 0;
+    QElapsedTimer holdElapsed;
+    holdElapsed.start();
+    QEventLoop holdLoop;
+    QObject::connect(window, &QQuickWindow::frameSwapped, &holdLoop, [&]() {
+        ++framesDuringHold;
+    });
+
+    QQmlAgentInputDriver::mouse(window, windowPoint, QEvent::MouseButtonPress, button, button,
+                                modifiers, &holdElapsed);
+
+    QTimer holdTimer;
+    holdTimer.setSingleShot(true);
+    QObject::connect(&holdTimer, &QTimer::timeout, &holdLoop, &QEventLoop::quit);
+    holdTimer.start(holdMs);
+    holdLoop.exec(QEventLoop::ExcludeUserInputEvents);
+
+    const QJsonObject settle = runInputAndSettle(window, params, [&](QElapsedTimer *elapsed) {
+        QQmlAgentInputDriver::mouse(window, windowPoint, QEvent::MouseButtonRelease, button,
+                                    Qt::NoButton, modifiers, elapsed);
+    });
+
+    return {
+        { QStringLiteral("delivered"), true },
+        { QStringLiteral("node"), ref.node },
+        { QStringLiteral("point"), pointArray(windowPoint) },
+        { QStringLiteral("itemPoint"), pointArray(itemPoint) },
+        { QStringLiteral("button"), params.value(QStringLiteral("button")).toString(QStringLiteral("left")) },
+        { QStringLiteral("holdMs"), holdMs },
+        { QStringLiteral("heldElapsedMs"), int(holdElapsed.elapsed()) },
+        { QStringLiteral("framesDuringHold"), framesDuringHold },
+        { QStringLiteral("releaseSent"), true },
         { QStringLiteral("mode"), QQmlAgentInputDriver::mode() },
         { QStringLiteral("settle"), settle },
     };

@@ -91,6 +91,7 @@ void QQmlAgentService::messageReceived(const QByteArray &message)
         QStringLiteral("Diagnostics.analyzeTree"),
         QStringLiteral("Diagnostics.analyzeBinding"),
         QStringLiteral("Input.clickNode"),
+        QStringLiteral("Input.longPressNode"),
         QStringLiteral("Input.wheel"),
         QStringLiteral("Input.focusNode"),
         QStringLiteral("Input.dispatchMouseEvent"),
@@ -170,6 +171,8 @@ QJsonObject QQmlAgentService::dispatch(const QString &method, const QJsonObject 
     }
     if (method == QLatin1String("Input.clickNode"))
         return runOnGuiThreadBlocking([&]() { return QQmlAgentInput::clickNode(params); });
+    if (method == QLatin1String("Input.longPressNode"))
+        return runOnGuiThreadBlocking([&]() { return QQmlAgentInput::longPressNode(params); });
     if (method == QLatin1String("Input.wheel"))
         return runOnGuiThreadBlocking([&]() { return QQmlAgentInput::wheel(params); });
     if (method == QLatin1String("Input.focusNode"))

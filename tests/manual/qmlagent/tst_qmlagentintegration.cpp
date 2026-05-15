@@ -3043,6 +3043,67 @@ void QmlAgentIntegrationTest::diagnosticsAnalyzeNodeHonorsChecks()
         return false;
     };
 
+    const auto partiallyVisibleResponse = invoke(&client, QStringLiteral("UI.query"), {
+        { QStringLiteral("selector"), QStringLiteral("objectName=\"smoke.partiallyVisiblePressArea\"") },
+        { QStringLiteral("includeSource"), false },
+        { QStringLiteral("fields"), QJsonArray{
+            QStringLiteral("nodeId"),
+            QStringLiteral("objectName"),
+            QStringLiteral("insideViewport"),
+            QStringLiteral("viewport"),
+            QStringLiteral("actionable"),
+            QStringLiteral("interactable"),
+        } },
+    }, 3, &errorMessage);
+    QVERIFY2(partiallyVisibleResponse.has_value(), qPrintable(errorMessage));
+    const QJsonObject partiallyVisibleNode = partiallyVisibleResponse->value(QStringLiteral("result"))
+            .toObject().value(QStringLiteral("matches")).toArray().at(0).toObject();
+    const int partiallyVisibleNodeId = partiallyVisibleNode.value(QStringLiteral("nodeId")).toInt(-1);
+    QVERIFY(partiallyVisibleNodeId > 0);
+    QCOMPARE(partiallyVisibleNode.value(QStringLiteral("insideViewport")).toBool(true), false);
+    QCOMPARE(partiallyVisibleNode.value(QStringLiteral("actionable")).toBool(false), true);
+    const QJsonObject partialViewport = partiallyVisibleNode.value(QStringLiteral("viewport")).toObject();
+    QCOMPARE(partialViewport.value(QStringLiteral("fullyInside")).toBool(true), false);
+    QCOMPARE(partialViewport.value(QStringLiteral("partiallyInside")).toBool(false), true);
+    QCOMPARE(partialViewport.value(QStringLiteral("centerInside")).toBool(false), true);
+    const QJsonObject partialActionability = partiallyVisibleNode.value(QStringLiteral("interactable")).toObject();
+    QCOMPARE(partialActionability.value(QStringLiteral("reasons")).toArray().size(), 0);
+    QCOMPARE(partialActionability.value(QStringLiteral("viewport")).toObject()
+                     .value(QStringLiteral("actionPointInside")).toBool(false), true);
+
+    const auto partiallyVisibleClickResponse = invoke(&client, QStringLiteral("Input.clickNode"), {
+        { QStringLiteral("nodeId"), partiallyVisibleNodeId },
+    }, 4, &errorMessage);
+    QVERIFY2(partiallyVisibleClickResponse.has_value(), qPrintable(errorMessage));
+    const QJsonObject partiallyVisibleClickResult =
+            partiallyVisibleClickResponse->value(QStringLiteral("result")).toObject();
+    QCOMPARE(partiallyVisibleClickResult.value(QStringLiteral("delivered")).toBool(false), true);
+    const QJsonObject deliveredViewport = partiallyVisibleClickResult.value(QStringLiteral("node")).toObject()
+            .value(QStringLiteral("viewport")).toObject();
+    QCOMPARE(deliveredViewport.value(QStringLiteral("fullyInside")).toBool(true), false);
+    QCOMPARE(deliveredViewport.value(QStringLiteral("partiallyInside")).toBool(false), true);
+    QCOMPARE(deliveredViewport.value(QStringLiteral("centerInside")).toBool(false), true);
+
+    const auto longPressResponse = invoke(&client, QStringLiteral("Input.longPressNode"), {
+        { QStringLiteral("selector"), QStringLiteral("objectName=\"smoke.longPressArea\"") },
+        { QStringLiteral("holdMs"), 900 },
+    }, 5, &errorMessage);
+    QVERIFY2(longPressResponse.has_value(), qPrintable(errorMessage));
+    const QJsonObject longPressResult = longPressResponse->value(QStringLiteral("result")).toObject();
+    QCOMPARE(longPressResult.value(QStringLiteral("delivered")).toBool(false), true);
+    QCOMPARE(longPressResult.value(QStringLiteral("releaseSent")).toBool(false), true);
+    QVERIFY2(longPressResult.value(QStringLiteral("heldElapsedMs")).toInt() >= 800,
+             qPrintable(QString::fromUtf8(QJsonDocument(longPressResult)
+                                          .toJson(QJsonDocument::Compact))));
+
+    const auto longPressVerifyResponse = invoke(&client, QStringLiteral("UI.query"), {
+        { QStringLiteral("selector"), QStringLiteral("objectName=\"smoke.longPressed\"") },
+        { QStringLiteral("includeSource"), false },
+    }, 6, &errorMessage);
+    QVERIFY2(longPressVerifyResponse.has_value(), qPrintable(errorMessage));
+    QCOMPARE(longPressVerifyResponse->value(QStringLiteral("result")).toObject()
+                     .value(QStringLiteral("matches")).toArray().size(), 1);
+
     const auto genericBlockedResponse = invoke(&client, QStringLiteral("UI.query"), {
         { QStringLiteral("selector"), QStringLiteral("objectName=\"smoke.genericBlockedTarget\"") },
         { QStringLiteral("includeSource"), false },
@@ -3052,7 +3113,7 @@ void QmlAgentIntegrationTest::diagnosticsAnalyzeNodeHonorsChecks()
             QStringLiteral("actionable"),
             QStringLiteral("interactable"),
         } },
-    }, 3, &errorMessage);
+    }, 7, &errorMessage);
     QVERIFY2(genericBlockedResponse.has_value(), qPrintable(errorMessage));
     const QJsonObject genericBlockedNode = genericBlockedResponse->value(QStringLiteral("result"))
             .toObject().value(QStringLiteral("matches")).toArray().at(0).toObject();
@@ -3069,7 +3130,7 @@ void QmlAgentIntegrationTest::diagnosticsAnalyzeNodeHonorsChecks()
     const auto minSizeResponse = invoke(&client, QStringLiteral("Diagnostics.analyzeNode"), {
         { QStringLiteral("nodeId"), nodeId },
         { QStringLiteral("checks"), QJsonArray{ QStringLiteral("minSize") } },
-    }, 4, &errorMessage);
+    }, 8, &errorMessage);
     QVERIFY2(minSizeResponse.has_value(), qPrintable(errorMessage));
     QCOMPARE(minSizeResponse->value(QStringLiteral("result")).toObject()
                      .value(QStringLiteral("issues")).toArray().size(), 0);
@@ -3077,7 +3138,7 @@ void QmlAgentIntegrationTest::diagnosticsAnalyzeNodeHonorsChecks()
     const auto viewportResponse = invoke(&client, QStringLiteral("Diagnostics.analyzeNode"), {
         { QStringLiteral("nodeId"), nodeId },
         { QStringLiteral("checks"), QJsonArray{ QStringLiteral("insideViewport") } },
-    }, 5, &errorMessage);
+    }, 9, &errorMessage);
     QVERIFY2(viewportResponse.has_value(), qPrintable(errorMessage));
 
     const QJsonArray issues = viewportResponse->value(QStringLiteral("result")).toObject()
@@ -3089,7 +3150,7 @@ void QmlAgentIntegrationTest::diagnosticsAnalyzeNodeHonorsChecks()
     const auto actionableResponse = invoke(&client, QStringLiteral("Diagnostics.analyzeNode"), {
         { QStringLiteral("nodeId"), centerOffscreenNodeId },
         { QStringLiteral("checks"), QJsonArray{ QStringLiteral("actionable") } },
-    }, 6, &errorMessage);
+    }, 10, &errorMessage);
     QVERIFY2(actionableResponse.has_value(), qPrintable(errorMessage));
     const QJsonArray actionableIssues = actionableResponse->value(QStringLiteral("result"))
             .toObject().value(QStringLiteral("issues")).toArray();
@@ -3104,7 +3165,7 @@ void QmlAgentIntegrationTest::diagnosticsAnalyzeNodeHonorsChecks()
     const auto genericActionableResponse = invoke(&client, QStringLiteral("Diagnostics.analyzeNode"), {
         { QStringLiteral("nodeId"), genericBlockedNodeId },
         { QStringLiteral("checks"), QJsonArray{ QStringLiteral("actionable") } },
-    }, 7, &errorMessage);
+    }, 11, &errorMessage);
     QVERIFY2(genericActionableResponse.has_value(), qPrintable(errorMessage));
     const QJsonArray genericActionableIssues = genericActionableResponse->value(QStringLiteral("result"))
             .toObject().value(QStringLiteral("issues")).toArray();
@@ -3121,7 +3182,7 @@ void QmlAgentIntegrationTest::diagnosticsAnalyzeNodeHonorsChecks()
 
     const auto genericClickResponse = invoke(&client, QStringLiteral("Input.clickNode"), {
         { QStringLiteral("nodeId"), genericBlockedNodeId },
-    }, 8, &errorMessage);
+    }, 12, &errorMessage);
     QVERIFY2(genericClickResponse.has_value(), qPrintable(errorMessage));
     const QJsonObject genericClickResult =
             genericClickResponse->value(QStringLiteral("result")).toObject();
@@ -3132,7 +3193,7 @@ void QmlAgentIntegrationTest::diagnosticsAnalyzeNodeHonorsChecks()
     const auto genericWheelResponse = invoke(&client, QStringLiteral("Input.wheel"), {
         { QStringLiteral("nodeId"), genericBlockedNodeId },
         { QStringLiteral("deltaY"), -120 },
-    }, 9, &errorMessage);
+    }, 13, &errorMessage);
     QVERIFY2(genericWheelResponse.has_value(), qPrintable(errorMessage));
     const QJsonObject genericWheelResult =
             genericWheelResponse->value(QStringLiteral("result")).toObject();
@@ -3143,7 +3204,7 @@ void QmlAgentIntegrationTest::diagnosticsAnalyzeNodeHonorsChecks()
     const auto genericMouseResponse = invoke(&client, QStringLiteral("Input.dispatchMouseEvent"), {
         { QStringLiteral("nodeId"), genericBlockedNodeId },
         { QStringLiteral("type"), QStringLiteral("mousePress") },
-    }, 10, &errorMessage);
+    }, 14, &errorMessage);
     QVERIFY2(genericMouseResponse.has_value(), qPrintable(errorMessage));
     const QJsonObject genericMouseResult =
             genericMouseResponse->value(QStringLiteral("result")).toObject();
@@ -3154,7 +3215,7 @@ void QmlAgentIntegrationTest::diagnosticsAnalyzeNodeHonorsChecks()
     const auto genericDragResponse = invoke(&client, QStringLiteral("Input.dragNode"), {
         { QStringLiteral("nodeId"), genericBlockedNodeId },
         { QStringLiteral("delta"), QJsonArray{ 1, 0 } },
-    }, 11, &errorMessage);
+    }, 15, &errorMessage);
     QVERIFY2(genericDragResponse.has_value(), qPrintable(errorMessage));
     const QJsonObject genericDragResult =
             genericDragResponse->value(QStringLiteral("result")).toObject();
@@ -3169,7 +3230,7 @@ void QmlAgentIntegrationTest::diagnosticsAnalyzeNodeHonorsChecks()
             { QStringLiteral("id"), 0 },
             { QStringLiteral("point"), QJsonArray{ 16, 12 } },
         } } },
-    }, 12, &errorMessage);
+    }, 16, &errorMessage);
     QVERIFY2(genericTouchResponse.has_value(), qPrintable(errorMessage));
     const QJsonObject genericTouchResult =
             genericTouchResponse->value(QStringLiteral("result")).toObject();
@@ -3179,7 +3240,7 @@ void QmlAgentIntegrationTest::diagnosticsAnalyzeNodeHonorsChecks()
 
     const auto genericFocusResponse = invoke(&client, QStringLiteral("Input.focusNode"), {
         { QStringLiteral("nodeId"), genericBlockedNodeId },
-    }, 13, &errorMessage);
+    }, 17, &errorMessage);
     QVERIFY2(genericFocusResponse.has_value(), qPrintable(errorMessage));
     const QJsonObject genericFocusResult =
             genericFocusResponse->value(QStringLiteral("result")).toObject();
@@ -3987,6 +4048,7 @@ void QmlAgentIntegrationTest::referenceClientMcpPersistentMode()
     bool sawStatus = false;
     bool sawLogEnable = false;
     bool sawInputDrag = false;
+    bool sawInputLongPress = false;
     bool sawInputMouse = false;
     bool sawInputTouch = false;
     bool sawInputWheel = false;
@@ -3996,6 +4058,7 @@ void QmlAgentIntegrationTest::referenceClientMcpPersistentMode()
     bool sawRuntimeInvokeMethod = false;
     bool sawWorkflowClick = false;
     bool sawWorkflowClickAndWait = false;
+    bool sawWorkflowLongPressAndWait = false;
     bool sawWorkflowKey = false;
     for (const QJsonValue &toolValue : tools) {
         const QString name = toolValue.toObject().value(QStringLiteral("name")).toString();
@@ -4006,6 +4069,7 @@ void QmlAgentIntegrationTest::referenceClientMcpPersistentMode()
         sawStatus |= name == QLatin1String("qmlagent.target_status");
         sawLogEnable |= name == QLatin1String("qmlagent.log_enable");
         sawInputDrag |= name == QLatin1String("qmlagent.input_drag");
+        sawInputLongPress |= name == QLatin1String("qmlagent.input_long_press");
         sawInputMouse |= name == QLatin1String("qmlagent.input_mouse");
         sawInputTouch |= name == QLatin1String("qmlagent.input_touch");
         sawInputWheel |= name == QLatin1String("qmlagent.input_wheel");
@@ -4015,6 +4079,7 @@ void QmlAgentIntegrationTest::referenceClientMcpPersistentMode()
         sawRuntimeInvokeMethod |= name == QLatin1String("qmlagent.runtime_invoke_method");
         sawWorkflowClick |= name == QLatin1String("qmlagent.workflow_click");
         sawWorkflowClickAndWait |= name == QLatin1String("qmlagent.workflow_click_and_wait");
+        sawWorkflowLongPressAndWait |= name == QLatin1String("qmlagent.workflow_long_press_and_wait");
         sawWorkflowKey |= name == QLatin1String("qmlagent.workflow_key");
     }
     QVERIFY2(sawUiQuery, output.constData());
@@ -4024,6 +4089,7 @@ void QmlAgentIntegrationTest::referenceClientMcpPersistentMode()
     QVERIFY2(sawStatus, output.constData());
     QVERIFY2(sawLogEnable, output.constData());
     QVERIFY2(sawInputDrag, output.constData());
+    QVERIFY2(sawInputLongPress, output.constData());
     QVERIFY2(sawInputMouse, output.constData());
     QVERIFY2(sawInputTouch, output.constData());
     QVERIFY2(sawInputWheel, output.constData());
@@ -4033,6 +4099,7 @@ void QmlAgentIntegrationTest::referenceClientMcpPersistentMode()
     QVERIFY2(sawRuntimeInvokeMethod, output.constData());
     QVERIFY2(sawWorkflowClick, output.constData());
     QVERIFY2(sawWorkflowClickAndWait, output.constData());
+    QVERIFY2(sawWorkflowLongPressAndWait, output.constData());
     QVERIFY2(sawWorkflowKey, output.constData());
 
     QCOMPARE(responses.value(3).value(QStringLiteral("result")).toObject()
