@@ -4075,6 +4075,17 @@ void QmlAgentIntegrationTest::referenceClientMcpPersistentMode()
              true);
     QCOMPARE(clickAndWaitContent.value(QStringLiteral("waitSelector")).toString(),
              QStringLiteral("objectName=\"smoke.clicked\""));
+    QCOMPARE(clickAndWaitContent.value(QStringLiteral("wait")).toObject()
+                     .value(QStringLiteral("ok")).toBool(),
+             true);
+    QCOMPARE(clickAndWaitContent.value(QStringLiteral("wait")).toObject()
+                     .value(QStringLiteral("matchCount")).toInt(),
+             1);
+    QVERIFY2(clickAndWaitContent.value(QStringLiteral("wait")).toObject()
+                     .value(QStringLiteral("node")).toObject()
+                     .value(QStringLiteral("objectName")).toString()
+                     == QStringLiteral("smoke.clicked"),
+             output.constData());
     const QJsonObject failedClickAndWaitContent = responses.value(25)
             .value(QStringLiteral("result")).toObject()
             .value(QStringLiteral("structuredContent")).toObject();
@@ -4086,6 +4097,12 @@ void QmlAgentIntegrationTest::referenceClientMcpPersistentMode()
     QCOMPARE(failedClickAndWaitContent.value(QStringLiteral("verification")).toObject()
                      .value(QStringLiteral("timedOut")).toBool(),
              true);
+    QCOMPARE(failedClickAndWaitContent.value(QStringLiteral("wait")).toObject()
+                     .value(QStringLiteral("timedOut")).toBool(),
+             true);
+    QVERIFY2(!failedClickAndWaitContent.value(QStringLiteral("wait")).toObject()
+                     .value(QStringLiteral("nextHints")).toArray().isEmpty(),
+             output.constData());
     QVERIFY2(!failedClickAndWaitContent.value(QStringLiteral("issues")).toArray().isEmpty(),
              output.constData());
     QCOMPARE(responses.value(12).value(QStringLiteral("result")).toObject()

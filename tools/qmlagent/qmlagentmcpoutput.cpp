@@ -29,6 +29,39 @@ static QJsonObject summarizedNode(const QJsonObject &node)
     return summary;
 }
 
+static QJsonObject summarizedWaitResult(const QJsonObject &wait)
+{
+    QJsonObject summary;
+    for (const QString &field : {
+             QStringLiteral("ok"),
+             QStringLiteral("timedOut"),
+             QStringLiteral("reason"),
+             QStringLiteral("selector"),
+             QStringLiteral("until"),
+             QStringLiteral("property"),
+             QStringLiteral("actual"),
+             QStringLiteral("elapsedMs"),
+             QStringLiteral("timeoutMs"),
+             QStringLiteral("attempts"),
+             QStringLiteral("framesObserved"),
+             QStringLiteral("matchCount"),
+             QStringLiteral("diagnostics"),
+             QStringLiteral("nextHints"),
+         }) {
+        if (wait.contains(field))
+            summary.insert(field, wait.value(field));
+    }
+    if (wait.contains(QStringLiteral("node"))) {
+        summary.insert(QStringLiteral("node"),
+                       summarizedNode(wait.value(QStringLiteral("node")).toObject()));
+        summary.insert(QStringLiteral("moreAvailable"), true);
+        summary.insert(QStringLiteral("omittedFields"), QJsonArray{
+            QStringLiteral("full wait node fields not listed in summary"),
+        });
+    }
+    return summary;
+}
+
 QJsonObject summarizedQueryResult(const QJsonObject &result)
 {
     QJsonArray matches;
@@ -124,5 +157,12 @@ QJsonObject summarizedWorkflowReport(const QJsonObject &report)
     };
     if (report.contains(QStringLiteral("key")))
         summary.insert(QStringLiteral("key"), report.value(QStringLiteral("key")));
+    if (report.contains(QStringLiteral("gateway")))
+        summary.insert(QStringLiteral("gateway"), report.value(QStringLiteral("gateway")));
+    if (report.contains(QStringLiteral("eventStream")))
+        summary.insert(QStringLiteral("eventStream"), report.value(QStringLiteral("eventStream")));
+    if (report.contains(QStringLiteral("wait")))
+        summary.insert(QStringLiteral("wait"),
+                       summarizedWaitResult(report.value(QStringLiteral("wait")).toObject()));
     return summary;
 }
