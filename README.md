@@ -48,6 +48,13 @@ cmake --install build
 
 Run `cmake --install` with permission to write into the selected Qt prefix.
 
+On Linux, make sure agents run targets against the same Qt installation that
+contains QmlAgent:
+
+```
+export LD_LIBRARY_PATH=/path/to/Qt/6.11.0/<platform>/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+```
+
 Installs the plugin into `<Qt prefix>/plugins/qmltooling/` and the three tools
 into `<Qt prefix>/bin/`.
 

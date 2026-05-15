@@ -13,6 +13,7 @@
 #include <QtCore/qlogging.h>
 #include <QtCore/qobject.h>
 #include <QtQuick/qquickitem.h>
+#include <QtQuick/qquickwindow.h>
 #include <QtTest/qtest.h>
 
 QT_USE_NAMESPACE
@@ -53,8 +54,8 @@ void tst_QQmlAgentInput::clickNodeFailureReasons_data()
                               << QStringLiteral("disabled");
     QTest::newRow("zero_size") << QStringLiteral("zeroSizeItem")
                                << QStringLiteral("zero_size");
-    QTest::newRow("unknown_window") << QStringLiteral("windowlessItem")
-                                    << QStringLiteral("unknown_window");
+    QTest::newRow("no_window") << QStringLiteral("windowlessItem")
+                               << QStringLiteral("no_window");
 }
 
 void tst_QQmlAgentInput::clickNodeFailureReasons()
@@ -63,20 +64,27 @@ void tst_QQmlAgentInput::clickNodeFailureReasons()
     QFETCH(QString, expectedReason);
 
     int nodeId = -1;
+    std::unique_ptr<QQuickWindow> window;
     std::unique_ptr<QObject> object;
 
     if (caseName == QLatin1String("object")) {
         object = std::make_unique<QObject>();
         nodeId = QQmlDebugService::idForObject(object.get());
     } else if (caseName == QLatin1String("invisibleItem")) {
+        window = std::make_unique<QQuickWindow>();
+        window->resize(100, 100);
         auto item = std::make_unique<QQuickItem>();
+        item->setParentItem(window->contentItem());
         item->setWidth(10);
         item->setHeight(10);
         item->setVisible(false);
         nodeId = QQmlDebugService::idForObject(item.get());
         object = std::move(item);
     } else if (caseName == QLatin1String("disabledItem")) {
+        window = std::make_unique<QQuickWindow>();
+        window->resize(100, 100);
         auto item = std::make_unique<QQuickItem>();
+        item->setParentItem(window->contentItem());
         item->setWidth(10);
         item->setHeight(10);
         item->setVisible(true);
@@ -84,7 +92,10 @@ void tst_QQmlAgentInput::clickNodeFailureReasons()
         nodeId = QQmlDebugService::idForObject(item.get());
         object = std::move(item);
     } else if (caseName == QLatin1String("zeroSizeItem")) {
+        window = std::make_unique<QQuickWindow>();
+        window->resize(100, 100);
         auto item = std::make_unique<QQuickItem>();
+        item->setParentItem(window->contentItem());
         item->setVisible(true);
         nodeId = QQmlDebugService::idForObject(item.get());
         object = std::move(item);
