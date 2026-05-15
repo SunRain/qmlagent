@@ -27,6 +27,7 @@
 #include <QtQuick/qquickitem.h>
 #include <QtQuick/qquickwindow.h>
 
+#include <atomic>
 #include <utility>
 
 QT_BEGIN_NAMESPACE
@@ -148,10 +149,17 @@ static QJsonObject runOnGuiThreadBlocking(Fn &&fn)
     {
         QSemaphore done;
         QJsonObject result;
+        std::atomic_bool cancelled = false;
+        std::atomic_bool started = false;
     };
 
     const auto state = QSharedPointer<GuiCallState>::create();
     if (!QMetaObject::invokeMethod(application, [state, fn = std::forward<Fn>(fn)]() mutable {
+            if (state->cancelled.load(std::memory_order_acquire)) {
+                state->done.release();
+                return;
+            }
+            state->started.store(true, std::memory_order_release);
             state->result = fn();
             state->done.release();
         }, Qt::QueuedConnection)) {
@@ -160,8 +168,15 @@ static QJsonObject runOnGuiThreadBlocking(Fn &&fn)
         return result;
     }
 
-    if (!state->done.tryAcquire(1, GuiThreadDispatchTimeoutMs))
-        return guiThreadTimeoutResult();
+    if (!state->done.tryAcquire(1, GuiThreadDispatchTimeoutMs)) {
+        const bool alreadyStarted = state->started.load(std::memory_order_acquire);
+        state->cancelled.store(true, std::memory_order_release);
+        QJsonObject result = guiThreadTimeoutResult();
+        result.insert(QStringLiteral("queued"), true);
+        result.insert(QStringLiteral("cancelledIfNotStarted"), true);
+        result.insert(QStringLiteral("alreadyStarted"), alreadyStarted);
+        return result;
+    }
 
     return state->result;
 }

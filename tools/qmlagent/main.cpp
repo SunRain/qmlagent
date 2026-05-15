@@ -2689,6 +2689,15 @@ private:
             return targetStatus();
         }
 
+        const QFileInfo socketInfo(path);
+        if (socketInfo.exists() || socketInfo.isSymLink()) {
+            m_lastError = QStringLiteral("Refusing to listen on existing local socket path %1. "
+                                         "qmlagent-mcp will not remove caller-supplied paths; "
+                                         "delete stale sockets yourself or choose a fresh path.")
+                                  .arg(path);
+            return targetStatus();
+        }
+
         QmlAgentTargetLease newLease;
         QString leaseError;
         if (!newLease.acquire(endpoint, QStringLiteral("mcp"), &leaseError)) {
@@ -2707,7 +2716,6 @@ private:
         m_targetLease = std::move(newLease);
 
         createTargetConnection();
-        QFile::remove(path);
         m_connection->startLocalServer(path);
         if (!m_connection->waitForConnected(timeoutMs)) {
             m_lastError = QStringLiteral("Timed out waiting for QmlAgent target on local socket %1.")

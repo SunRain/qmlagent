@@ -22,6 +22,7 @@ private slots:
     void formatsResponse();
     void formatsError();
     void formatsEvent();
+    void mcpToolResultDoesNotDuplicateStructuredPayload();
     void mcpToolSchemasExposeAgentFirstContracts();
     void agentFacingSurfaceDoesNotAdvertiseRetiredNames();
 };
@@ -144,6 +145,21 @@ static QString sourceFileContents(const QString &relativePath)
     if (!file.open(QIODevice::ReadOnly))
         return {};
     return QString::fromUtf8(file.readAll());
+}
+
+void tst_QQmlAgentProtocol::mcpToolResultDoesNotDuplicateStructuredPayload()
+{
+    const QJsonObject payload{
+        { QStringLiteral("ok"), true },
+        { QStringLiteral("largeEvidence"), QStringLiteral("this must stay out of text content") },
+    };
+    const QJsonObject result = QmlAgentMcp::toolResult(payload);
+
+    QCOMPARE(result.value(QStringLiteral("structuredContent")).toObject(), payload);
+    const QString text = result.value(QStringLiteral("content")).toArray().first().toObject()
+            .value(QStringLiteral("text")).toString();
+    QVERIFY(text.contains(QStringLiteral("structuredContent")));
+    QVERIFY(!text.contains(QStringLiteral("largeEvidence")));
 }
 
 void tst_QQmlAgentProtocol::mcpToolSchemasExposeAgentFirstContracts()

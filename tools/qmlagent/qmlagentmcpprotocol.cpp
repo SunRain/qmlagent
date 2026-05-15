@@ -4,6 +4,7 @@
 #include "qmlagentmcpprotocol.h"
 
 #include <QtCore/qjsondocument.h>
+#include <QtCore/qvariant.h>
 
 namespace QmlAgentMcp {
 
@@ -521,18 +522,20 @@ QJsonObject jsonError(const QJsonValue &id, int code, const QString &message,
 
 QJsonObject toolResult(const QJsonValue &payload, bool isError)
 {
-    QByteArray payloadJson;
-    if (payload.isArray())
-        payloadJson = QJsonDocument(payload.toArray()).toJson(QJsonDocument::Compact);
-    else if (payload.isObject())
-        payloadJson = QJsonDocument(payload.toObject()).toJson(QJsonDocument::Compact);
-    else
-        payloadJson = QJsonDocument(QJsonArray{ payload }).toJson(QJsonDocument::Compact);
+    QString text = isError ? QStringLiteral("QmlAgent tool failed. See structuredContent.")
+                           : QStringLiteral("QmlAgent tool result. See structuredContent.");
+    if (isError && payload.isObject()) {
+        const QString error = payload.toObject().value(QStringLiteral("error")).toString();
+        if (!error.isEmpty())
+            text = QStringLiteral("QmlAgent tool failed: %1").arg(error);
+    } else if (!payload.isObject() && !payload.isArray()) {
+        text = payload.toVariant().toString();
+    }
 
     QJsonObject result{
         { QStringLiteral("content"), QJsonArray{ QJsonObject{
             { QStringLiteral("type"), QStringLiteral("text") },
-            { QStringLiteral("text"), QString::fromUtf8(payloadJson) },
+            { QStringLiteral("text"), text },
         } } },
     };
     if (payload.isObject() || payload.isArray())

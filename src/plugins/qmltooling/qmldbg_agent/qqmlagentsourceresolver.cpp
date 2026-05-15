@@ -23,7 +23,6 @@
 #include <private/qqmlcontextdata_p.h>
 #include <private/qqmldata_p.h>
 #include <private/qqmlproperty_p.h>
-#include <private/qqmlpropertybinding_p.h>
 #include <private/qproperty_p.h>
 
 QT_BEGIN_NAMESPACE
@@ -463,18 +462,11 @@ static QJsonObject sourceLocationFromBindableBinding(QPropertyBindingPrivate *bi
                             { QStringLiteral("source location is from QPropertyBinding, not QQmlBinding") });
     }
 
-    const QQmlPropertyBinding *qmlBinding = reinterpret_cast<const QQmlPropertyBinding *>(binding);
-    const QQmlSourceLocation location = qmlBinding->jsExpression()->sourceLocation();
-    if (!location.sourceFile.isEmpty() && location.line > 0) {
-        return makeLocation(location.sourceFile, location.line, location.column,
-                            QStringLiteral("qqmlpropertybinding-source-location"), 0.95);
-    }
-    if (!location.sourceFile.isEmpty()) {
-        return makeLocation(location.sourceFile, -1, -1,
-                            QStringLiteral("qqmlpropertybinding-source-location"), 0.70,
-                            { QStringLiteral("binding source has URL but no exact line") });
-    }
-    return QQmlAgentSourceResolver::unknownLocation(QStringLiteral("qproperty-binding"));
+    QJsonObject unknown = QQmlAgentSourceResolver::unknownLocation(QStringLiteral("qproperty-binding"));
+    unknown.insert(QStringLiteral("limitations"), QJsonArray{
+        QStringLiteral("QPropertyBindingPrivate does not safely expose QQmlPropertyBinding source metadata from the plugin boundary"),
+    });
+    return unknown;
 }
 
 static QJsonObject bindableDependencySummary(QPropertyBindingPrivate *binding)
@@ -491,11 +483,10 @@ static QJsonObject bindableDependencySummary(QPropertyBindingPrivate *binding)
     };
 
     if (binding->hasCustomVTable()) {
-        auto *qmlBinding = static_cast<QQmlPropertyBinding *>(binding);
-        summary.insert(QStringLiteral("hasRuntimeDependencies"), qmlBinding->hasDependencies());
+        summary.insert(QStringLiteral("hasCustomVTable"), true);
         summary.insert(QStringLiteral("limitations"), QJsonArray{
             QStringLiteral("QProperty dependency observers do not expose source QObject/property/value pairs from the plugin boundary"),
-            QStringLiteral("QQmlPropertyBinding JavaScript guard details are only reported as a boolean dependency summary"),
+            QStringLiteral("Custom QProperty binding vtables may be QML-owned, but QmlAgent does not cast them to QQmlPropertyBinding because that is not type-safe from the plugin boundary"),
         });
     }
 
@@ -827,7 +818,6 @@ QJsonObject QQmlAgentSourceResolver::bindingProvenanceForProperty(QObject *objec
     provenance.insert(QStringLiteral("bindingKind"),
                       binding ? bindingKindName(binding->kind())
                               : QStringLiteral("qpropertyBinding"));
-    provenance.insert(QStringLiteral("sourceLocation"), bindingLocation);
     provenance.insert(QStringLiteral("confidence"), qmlBinding ? 0.85
                                                                : (qpropertyBinding ? 0.65 : 0.70));
     QJsonArray limitations{
@@ -835,22 +825,43 @@ QJsonObject QQmlAgentSourceResolver::bindingProvenanceForProperty(QObject *objec
         QStringLiteral("expression text is reported as a bounded source snippet when available, not a parsed QML AST"),
         QStringLiteral("runtime dependency capture can under-report unevaluated branches and lazy paths"),
     };
+    const bool hasBindingSourceLocation =
+            bindingLocation.value(QStringLiteral("confidence")).toDouble() > 0.0;
     if (qpropertyBinding) {
         limitations.replace(0, QStringLiteral("binding metadata is read from Qt bindable-property private API"));
         limitations.append(QStringLiteral("bindable-property dependency values are not exposed in this first implementation"));
     }
     provenance.insert(QStringLiteral("limitations"), limitations);
 
-    const PropertySourceSnippet snippet = propertySourceSnippet(bindingLocation, propertyName,
+    const QJsonObject snippetBaseLocation =
+            bindingLocation.value(QStringLiteral("file")).toString().isEmpty()
+            ? objectLocation
+            : bindingLocation;
+    const PropertySourceSnippet snippet = propertySourceSnippet(snippetBaseLocation, propertyName,
                                                                objectLine);
-    if (!snippet.expression.isEmpty()) {
-        provenance.insert(QStringLiteral("expression"), snippet.expression);
-        insertCandidateIdentifiers(&provenance, snippet.expression);
-        provenance.insert(QStringLiteral("expressionSourceLocation"),
-                          makeLocation(bindingLocation.value(QStringLiteral("file")).toString(),
-                                       snippet.line, snippet.column, snippet.method,
-                                       snippet.confidence, snippet.limitations));
+    const QJsonArray snippetCandidates = candidateIdentifiersFromExpression(snippet.expression);
+    const bool mayUseObjectSourceFallback = !qpropertyBinding || hasBindingSourceLocation
+            || !snippetCandidates.isEmpty();
+    if (qpropertyBinding && !hasBindingSourceLocation && !mayUseObjectSourceFallback) {
+        QJsonArray updatedLimitations = provenance.value(QStringLiteral("limitations")).toArray();
+        updatedLimitations.append(QStringLiteral("source expression omitted because generic QProperty binding metadata does not identify whether the active binding came from the object body, a state, or imperative replacement"));
+        provenance.insert(QStringLiteral("limitations"), updatedLimitations);
     }
+    QJsonObject expressionLocation;
+    if (mayUseObjectSourceFallback && !snippet.expression.isEmpty()) {
+        provenance.insert(QStringLiteral("expression"), snippet.expression);
+        if (!snippetCandidates.isEmpty())
+            provenance.insert(QStringLiteral("candidateIdentifiers"), snippetCandidates);
+        expressionLocation = makeLocation(snippetBaseLocation.value(QStringLiteral("file")).toString(),
+                                          snippet.line, snippet.column, snippet.method,
+                                          snippet.confidence, snippet.limitations);
+        provenance.insert(QStringLiteral("expressionSourceLocation"), expressionLocation);
+    }
+    provenance.insert(QStringLiteral("sourceLocation"),
+                      bindingLocation.value(QStringLiteral("confidence")).toDouble() > 0.0
+                              || expressionLocation.isEmpty()
+                              ? bindingLocation
+                              : expressionLocation);
 
     if (qmlBinding) {
         const QJsonArray dependencies = dependencyEvidence(qmlBinding);

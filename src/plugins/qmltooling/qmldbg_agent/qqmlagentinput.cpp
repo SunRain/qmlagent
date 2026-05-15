@@ -12,6 +12,7 @@
 #include <QtCore/qelapsedtimer.h>
 #include <QtCore/qeventloop.h>
 #include <QtCore/qjsonarray.h>
+#include <QtCore/qpointer.h>
 #include <QtCore/qtimer.h>
 #include <QtCore/qvector.h>
 #include <QtGui/qguiapplication.h>
@@ -455,6 +456,7 @@ static QJsonObject runInputAndSettle(QQuickWindow *window, const QJsonObject &pa
     QElapsedTimer elapsed;
     elapsed.start();
     QEventLoop settleLoop;
+    QPointer<QQuickWindow> guardedWindow(window);
     const QJsonObject settle = params.value(QStringLiteral("settle")).toObject();
     const int settleTimeoutMs = settle.value(QStringLiteral("timeoutMs")).toInt(DefaultSettleTimeoutMs);
 
@@ -465,6 +467,16 @@ static QJsonObject runInputAndSettle(QQuickWindow *window, const QJsonObject &pa
 
     prepareWindowForInput(window);
     fn(&elapsed);
+
+    if (!guardedWindow) {
+        return {
+            { QStringLiteral("strategy"), QStringLiteral("frameSwappedOrTimeout") },
+            { QStringLiteral("framesAfterAction"), framesAfterAction },
+            { QStringLiteral("elapsedMs"), int(elapsed.elapsed()) },
+            { QStringLiteral("timedOut"), framesAfterAction == 0 },
+            { QStringLiteral("targetWindowDestroyed"), true },
+        };
+    }
 
     QTimer timeout;
     timeout.setSingleShot(true);
@@ -769,15 +781,24 @@ QJsonObject QQmlAgentInput::clickNode(const QJsonObject &params)
 
     const QRectF bbox = itemBoxInWindow(item);
     const QPointF center = bbox.center();
+    const QJsonObject deliveryWindow = deliveryWindowEvidence(item);
+    QPointer<QQuickWindow> guardedWindow(window);
     const QJsonObject settle = runInputAndSettle(window, params, [&](QElapsedTimer *elapsed) {
-        QQmlAgentInputDriver::click(window, center, elapsed);
+        if (!guardedWindow)
+            return;
+        QQmlAgentInputDriver::mouse(guardedWindow.data(), center, QEvent::MouseButtonPress,
+                                    Qt::LeftButton, Qt::LeftButton, Qt::NoModifier, elapsed);
+        if (!guardedWindow)
+            return;
+        QQmlAgentInputDriver::mouse(guardedWindow.data(), center, QEvent::MouseButtonRelease,
+                                    Qt::LeftButton, Qt::NoButton, Qt::NoModifier, elapsed);
     });
 
     return {
         { QStringLiteral("delivered"), true },
         { QStringLiteral("node"), ref.node },
         { QStringLiteral("point"), QJsonArray{ center.x(), center.y() } },
-        { QStringLiteral("deliveryWindow"), deliveryWindowEvidence(item) },
+        { QStringLiteral("deliveryWindow"), deliveryWindow },
         { QStringLiteral("mode"), QQmlAgentInputDriver::mode() },
         { QStringLiteral("settle"), settle },
         { QStringLiteral("postDispatch"), postDispatchTargetState(nodeId, &center) },
@@ -831,6 +852,8 @@ QJsonObject QQmlAgentInput::longPressNode(const QJsonObject &params)
         return inputFailureFromActionability(actionabilityReasons, nodeId, longPressFailure);
 
     const Qt::KeyboardModifiers modifiers = modifiersFromParams(params);
+    const QJsonObject deliveryWindow = deliveryWindowEvidence(item);
+    QPointer<QQuickWindow> guardedWindow(window);
     int framesDuringHold = 0;
     QElapsedTimer holdElapsed;
     holdElapsed.start();
@@ -848,22 +871,34 @@ QJsonObject QQmlAgentInput::longPressNode(const QJsonObject &params)
     holdTimer.start(holdMs);
     holdLoop.exec(QEventLoop::ExcludeUserInputEvents);
 
-    const QJsonObject settle = runInputAndSettle(window, params, [&](QElapsedTimer *elapsed) {
-        QQmlAgentInputDriver::mouse(window, windowPoint, QEvent::MouseButtonRelease, button,
-                                    Qt::NoButton, modifiers, elapsed);
-    });
+    const bool releaseSent = guardedWindow;
+    const QJsonObject settle = guardedWindow
+            ? runInputAndSettle(guardedWindow.data(), params, [&](QElapsedTimer *elapsed) {
+                  if (!guardedWindow)
+                      return;
+                  QQmlAgentInputDriver::mouse(guardedWindow.data(), windowPoint,
+                                              QEvent::MouseButtonRelease, button,
+                                              Qt::NoButton, modifiers, elapsed);
+              })
+            : QJsonObject{
+                  { QStringLiteral("strategy"), QStringLiteral("frameSwappedOrTimeout") },
+                  { QStringLiteral("framesAfterAction"), framesDuringHold },
+                  { QStringLiteral("elapsedMs"), int(holdElapsed.elapsed()) },
+                  { QStringLiteral("timedOut"), framesDuringHold == 0 },
+                  { QStringLiteral("targetWindowDestroyed"), true },
+              };
 
     return {
         { QStringLiteral("delivered"), true },
         { QStringLiteral("node"), ref.node },
         { QStringLiteral("point"), pointArray(windowPoint) },
         { QStringLiteral("itemPoint"), pointArray(itemPoint) },
-        { QStringLiteral("deliveryWindow"), deliveryWindowEvidence(item) },
+        { QStringLiteral("deliveryWindow"), deliveryWindow },
         { QStringLiteral("button"), params.value(QStringLiteral("button")).toString(QStringLiteral("left")) },
         { QStringLiteral("holdMs"), holdMs },
         { QStringLiteral("heldElapsedMs"), int(holdElapsed.elapsed()) },
         { QStringLiteral("framesDuringHold"), framesDuringHold },
-        { QStringLiteral("releaseSent"), true },
+        { QStringLiteral("releaseSent"), releaseSent },
         { QStringLiteral("mode"), QQmlAgentInputDriver::mode() },
         { QStringLiteral("settle"), settle },
         { QStringLiteral("postDispatch"), postDispatchTargetState(nodeId, &windowPoint) },
@@ -933,15 +968,27 @@ QJsonObject QQmlAgentInput::dragNode(const QJsonObject &params)
     }
 
     const Qt::KeyboardModifiers modifiers = modifiersFromParams(params);
+    const QJsonObject deliveryWindow = deliveryWindowEvidence(item);
+    QPointer<QQuickWindow> guardedWindow(window);
+    int eventsSent = 0;
     const QJsonObject settle = runInputAndSettle(window, params, [&](QElapsedTimer *elapsed) {
-        QQmlAgentInputDriver::mouse(window, path.first(), QEvent::MouseButtonPress, button, button,
-                                    modifiers, elapsed);
+        if (!guardedWindow)
+            return;
+        QQmlAgentInputDriver::mouse(guardedWindow.data(), path.first(), QEvent::MouseButtonPress,
+                                    button, button, modifiers, elapsed);
+        ++eventsSent;
         for (int i = 1; i < path.size(); ++i) {
-            QQmlAgentInputDriver::mouse(window, path.at(i), QEvent::MouseMove, Qt::NoButton,
+            if (!guardedWindow)
+                return;
+            QQmlAgentInputDriver::mouse(guardedWindow.data(), path.at(i), QEvent::MouseMove, Qt::NoButton,
                                         button, modifiers, elapsed);
+            ++eventsSent;
         }
-        QQmlAgentInputDriver::mouse(window, path.last(), QEvent::MouseButtonRelease, button,
-                                    Qt::NoButton, modifiers, elapsed);
+        if (!guardedWindow)
+            return;
+        QQmlAgentInputDriver::mouse(guardedWindow.data(), path.last(), QEvent::MouseButtonRelease,
+                                    button, Qt::NoButton, modifiers, elapsed);
+        ++eventsSent;
     });
     const QPointF finalWindowPoint = path.constLast();
 
@@ -954,8 +1001,8 @@ QJsonObject QQmlAgentInput::dragNode(const QJsonObject &params)
         { QStringLiteral("steps"), steps },
         { QStringLiteral("itemPoints"), itemPoints },
         { QStringLiteral("windowPoints"), windowPoints },
-        { QStringLiteral("deliveryWindow"), deliveryWindowEvidence(item) },
-        { QStringLiteral("eventsSent"), steps + 2 },
+        { QStringLiteral("deliveryWindow"), deliveryWindow },
+        { QStringLiteral("eventsSent"), eventsSent },
         { QStringLiteral("mode"), QQmlAgentInputDriver::mode() },
         { QStringLiteral("settle"), settle },
         { QStringLiteral("postDispatch"), postDispatchTargetState(nodeId, &finalWindowPoint) },
@@ -1027,9 +1074,13 @@ QJsonObject QQmlAgentInput::dispatchMouseEvent(const QJsonObject &params)
         return inputFailureFromActionability(actionabilityReasons, nodeId, mouseFailure);
 
     const Qt::KeyboardModifiers modifiers = modifiersFromParams(params);
+    const QJsonObject deliveryWindow = deliveryWindowEvidence(item);
+    QPointer<QQuickWindow> guardedWindow(window);
     const QJsonObject settle = runInputAndSettle(window, params, [&](QElapsedTimer *elapsed) {
-        QQmlAgentInputDriver::mouse(window, windowPoint, eventType, button, buttons, modifiers,
-                                    elapsed);
+        if (!guardedWindow)
+            return;
+        QQmlAgentInputDriver::mouse(guardedWindow.data(), windowPoint, eventType, button, buttons,
+                                    modifiers, elapsed);
     });
 
     return {
@@ -1038,7 +1089,7 @@ QJsonObject QQmlAgentInput::dispatchMouseEvent(const QJsonObject &params)
         { QStringLiteral("type"), typeName },
         { QStringLiteral("point"), QJsonArray{ windowPoint.x(), windowPoint.y() } },
         { QStringLiteral("itemPoint"), QJsonArray{ itemPoint.x(), itemPoint.y() } },
-        { QStringLiteral("deliveryWindow"), deliveryWindowEvidence(item) },
+        { QStringLiteral("deliveryWindow"), deliveryWindow },
         { QStringLiteral("mode"), QQmlAgentInputDriver::mode() },
         { QStringLiteral("settle"), settle },
         { QStringLiteral("postDispatch"), postDispatchTargetState(nodeId, &windowPoint) },
@@ -1140,8 +1191,12 @@ QJsonObject QQmlAgentInput::dispatchTouchEvent(const QJsonObject &params)
     }
 
     const Qt::KeyboardModifiers modifiers = modifiersFromParams(params);
+    const QJsonObject deliveryWindow = deliveryWindowEvidence(item);
+    QPointer<QQuickWindow> guardedWindow(window);
     const QJsonObject settle = runInputAndSettle(window, params, [&](QElapsedTimer *) {
-        QQmlAgentInputDriver::touch(window, eventType, eventPoints, modifiers);
+        if (!guardedWindow)
+            return;
+        QQmlAgentInputDriver::touch(guardedWindow.data(), eventType, eventPoints, modifiers);
     });
     const QPointF postPoint = eventPoints.isEmpty() ? QPointF() : eventPoints.constLast().windowPoint;
 
@@ -1150,7 +1205,7 @@ QJsonObject QQmlAgentInput::dispatchTouchEvent(const QJsonObject &params)
         { QStringLiteral("node"), ref.node },
         { QStringLiteral("type"), typeName },
         { QStringLiteral("points"), points },
-        { QStringLiteral("deliveryWindow"), deliveryWindowEvidence(item) },
+        { QStringLiteral("deliveryWindow"), deliveryWindow },
         { QStringLiteral("mode"), QQmlAgentInputDriver::mode() },
         { QStringLiteral("settle"), settle },
         { QStringLiteral("postDispatch"), eventPoints.isEmpty()
@@ -1202,10 +1257,19 @@ QJsonObject QQmlAgentInput::wheel(const QJsonObject &params)
     }
 
     const Qt::KeyboardModifiers modifiers = modifiersFromParams(params);
+    const QJsonObject deliveryWindow = deliveryWindowEvidence(item);
+    QPointer<QQuickWindow> guardedWindow(window);
+    int eventsSent = 0;
     const QJsonObject settle = runInputAndSettle(window, params, [&](QElapsedTimer *elapsed) {
-        QQmlAgentInputDriver::mouse(window, center, QEvent::MouseMove, Qt::NoButton,
+        if (!guardedWindow)
+            return;
+        QQmlAgentInputDriver::mouse(guardedWindow.data(), center, QEvent::MouseMove, Qt::NoButton,
                                     Qt::NoButton, modifiers, elapsed);
-        QQmlAgentInputDriver::wheel(window, center, pixelDelta, angleDelta, modifiers);
+        ++eventsSent;
+        if (!guardedWindow)
+            return;
+        QQmlAgentInputDriver::wheel(guardedWindow.data(), center, pixelDelta, angleDelta, modifiers);
+        ++eventsSent;
     });
 
     return {
@@ -1214,8 +1278,8 @@ QJsonObject QQmlAgentInput::wheel(const QJsonObject &params)
         { QStringLiteral("point"), QJsonArray{ center.x(), center.y() } },
         { QStringLiteral("pixelDelta"), QJsonArray{ pixelDelta.x(), pixelDelta.y() } },
         { QStringLiteral("angleDelta"), QJsonArray{ angleDelta.x(), angleDelta.y() } },
-        { QStringLiteral("deliveryWindow"), deliveryWindowEvidence(item) },
-        { QStringLiteral("eventsSent"), 2 },
+        { QStringLiteral("deliveryWindow"), deliveryWindow },
+        { QStringLiteral("eventsSent"), eventsSent },
         { QStringLiteral("mode"), QQmlAgentInputDriver::mode() },
         { QStringLiteral("settle"), settle },
         { QStringLiteral("postDispatch"), postDispatchTargetState(nodeId, &center) },
@@ -1315,12 +1379,16 @@ QJsonObject QQmlAgentInput::typeText(const QJsonObject &params)
     int unitsSent = 0;
     QJsonObject replacement;
     bool movedCursorToEnd = false;
+    QPointer<QQuickWindow> guardedWindow(window);
     const QJsonObject settle = runInputAndSettle(window, params, [&](QElapsedTimer *) {
-        QQuickItem *activeFocusItem = window->activeFocusItem();
+        if (!guardedWindow)
+            return;
+        QQuickItem *activeFocusItem = guardedWindow->activeFocusItem();
         QObject *keyTarget = itemContainsOrIs(targetItem, activeFocusItem)
                 ? static_cast<QObject *>(activeFocusItem)
                 : targetKeyItem ? static_cast<QObject *>(targetKeyItem)
-                                : static_cast<QObject *>(window);
+                                : static_cast<QObject *>(guardedWindow.data());
+        QPointer<QObject> guardedKeyTarget(keyTarget);
         if (replaceExisting) {
             QObject *selectionTarget = activeFocusItem ? static_cast<QObject *>(activeFocusItem)
                                                        : keyTarget;
@@ -1336,28 +1404,41 @@ QJsonObject QQmlAgentInput::typeText(const QJsonObject &params)
             if (!selected)
                 return;
             if (text.isEmpty()) {
-                QQmlAgentInputDriver::key(keyTarget, QEvent::KeyPress, Qt::Key_Backspace,
+                if (!guardedKeyTarget)
+                    return;
+                QQmlAgentInputDriver::key(guardedKeyTarget.data(), QEvent::KeyPress, Qt::Key_Backspace,
                                           Qt::NoModifier, {});
-                QQmlAgentInputDriver::key(keyTarget, QEvent::KeyRelease, Qt::Key_Backspace,
+                if (!guardedKeyTarget)
+                    return;
+                QQmlAgentInputDriver::key(guardedKeyTarget.data(), QEvent::KeyRelease, Qt::Key_Backspace,
                                           Qt::NoModifier, {});
                 return;
             }
         } else if (targetKeyItem && isEditableTextObject(keyTarget)) {
-            QQmlAgentInputDriver::key(keyTarget, QEvent::KeyPress, Qt::Key_End,
+            QQmlAgentInputDriver::key(guardedKeyTarget.data(), QEvent::KeyPress, Qt::Key_End,
                                       Qt::NoModifier, {});
-            QQmlAgentInputDriver::key(keyTarget, QEvent::KeyRelease, Qt::Key_End,
+            if (!guardedKeyTarget)
+                return;
+            QQmlAgentInputDriver::key(guardedKeyTarget.data(), QEvent::KeyRelease, Qt::Key_End,
                                       Qt::NoModifier, {});
             movedCursorToEnd = true;
         }
         QString unit;
         qsizetype index = 0;
         while (appendNextTextUnit(text, &index, &unit)) {
-            if (keyTarget != static_cast<QObject *>(window) && isEditableTextObject(keyTarget)) {
-                QQmlAgentInputDriver::inputText(keyTarget, unit);
+            if (!guardedKeyTarget)
+                return;
+            if (keyTarget != static_cast<QObject *>(guardedWindow.data())
+                    && isEditableTextObject(keyTarget)) {
+                QQmlAgentInputDriver::inputText(guardedKeyTarget.data(), unit);
             } else {
                 const int key = keyForTextUnit(unit);
-                QQmlAgentInputDriver::key(keyTarget, QEvent::KeyPress, key, Qt::NoModifier, unit);
-                QQmlAgentInputDriver::key(keyTarget, QEvent::KeyRelease, key, Qt::NoModifier, unit);
+                QQmlAgentInputDriver::key(guardedKeyTarget.data(), QEvent::KeyPress, key,
+                                          Qt::NoModifier, unit);
+                if (!guardedKeyTarget)
+                    return;
+                QQmlAgentInputDriver::key(guardedKeyTarget.data(), QEvent::KeyRelease, key,
+                                          Qt::NoModifier, unit);
             }
             ++unitsSent;
         }
@@ -1504,16 +1585,22 @@ QJsonObject QQmlAgentInput::dispatchKeyEvent(const QJsonObject &params)
                           { QStringLiteral("no focused or unique nonzero QQuickWindow with contentItem") });
     }
 
+    QPointer<QQuickWindow> guardedWindow(window);
     const QJsonObject settle = runInputAndSettle(window, params, [&](QElapsedTimer *) {
-        QQuickItem *activeFocusItem = window->activeFocusItem();
+        if (!guardedWindow)
+            return;
+        QQuickItem *activeFocusItem = guardedWindow->activeFocusItem();
         QObject *keyTarget = itemContainsOrIs(targetKeyItem, activeFocusItem)
                 ? static_cast<QObject *>(activeFocusItem)
                 : targetKeyItem ? static_cast<QObject *>(targetKeyItem)
-                                : static_cast<QObject *>(window);
+                                : static_cast<QObject *>(guardedWindow.data());
+        QPointer<QObject> guardedKeyTarget(keyTarget);
         if (type == QLatin1String("keyClick") || type == QLatin1String("keyPress"))
-            QQmlAgentInputDriver::key(keyTarget, QEvent::KeyPress, key, modifiers, text);
+            QQmlAgentInputDriver::key(guardedKeyTarget.data(), QEvent::KeyPress, key, modifiers, text);
+        if (!guardedKeyTarget)
+            return;
         if (type == QLatin1String("keyClick") || type == QLatin1String("keyRelease"))
-            QQmlAgentInputDriver::key(keyTarget, QEvent::KeyRelease, key, modifiers, text);
+            QQmlAgentInputDriver::key(guardedKeyTarget.data(), QEvent::KeyRelease, key, modifiers, text);
     });
 
     QJsonObject result{

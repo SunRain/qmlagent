@@ -1377,8 +1377,10 @@ QJsonObject QQmlAgentUiTree::query(const QJsonObject &params)
     const QString kind = criteria.kind;
     const QString value = criteria.value;
 
+    const bool includeInvisible = params.value(QStringLiteral("includeInvisible")).toBool(false);
+
     TreeBuildOptions matchOptions;
-    matchOptions.includeInvisible = true;
+    matchOptions.includeInvisible = includeInvisible;
     matchOptions.includeSource = kind == QLatin1String("sourceLocation");
     matchOptions.fields.insert(QStringLiteral("nodeId"));
     matchOptions.fields.insert(QStringLiteral("type"));
@@ -1390,7 +1392,7 @@ QJsonObject QQmlAgentUiTree::query(const QJsonObject &params)
         matchOptions.fields.insert(QStringLiteral("typeAliases"));
 
     TreeBuildOptions resultOptions;
-    resultOptions.includeInvisible = true;
+    resultOptions.includeInvisible = includeInvisible;
     resultOptions.includeSource = params.value(QStringLiteral("includeSource")).toBool(true)
             || kind == QLatin1String("sourceLocation");
     resultOptions.properties = propertiesFromParams(params);
@@ -1442,7 +1444,7 @@ QJsonObject QQmlAgentUiTree::query(const QJsonObject &params)
             treeFields.append(selectorField);
         const QJsonObject tree = getTree({
             { QStringLiteral("depth"), -1 },
-            { QStringLiteral("includeInvisible"), true },
+            { QStringLiteral("includeInvisible"), includeInvisible },
             { QStringLiteral("includeSource"), kind == QLatin1String("sourceLocation") },
             { QStringLiteral("fields"), treeFields },
         });
@@ -1922,6 +1924,7 @@ QQmlAgentUiTree::NodeRef QQmlAgentUiTree::resolveNodeRef(const QJsonObject &para
 
     const QJsonObject queryResult = query({
         { QStringLiteral("selector"), selectorText },
+        { QStringLiteral("includeInvisible"), true },
         { QStringLiteral("includeSource"), includeSource },
         { QStringLiteral("properties"), properties },
     });

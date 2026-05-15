@@ -59,6 +59,7 @@ private slots:
     void uiSubscribeEmitsCoalescedChangeEvents();
     void uiTreeSupportsProjectionBoundsAndCollapse();
     void uiQuerySerializesRequestedValueTypes();
+    void uiQueryDefaultsToVisibleNodes();
     void diagnosticsAnalyzeBindingReportsRuntimeProvenance();
     void sourceResolverClassifiesLoadedDelegateAndDynamicNodes();
     void sourceResolveNodeReportsObjectNameFallback();
@@ -74,6 +75,7 @@ private slots:
     void referenceClientMcpRoutesThroughLauncher();
     void referenceClientMcpWorkflowReports();
     void referenceClientReportsSingleClientConflict();
+    void referenceClientMcpRefusesExistingLocalSocketPath();
     void referenceClientMcpConnectsLocalSocket();
 
 private:
@@ -1651,6 +1653,39 @@ void QmlAgentIntegrationTest::uiQuerySerializesRequestedValueTypes()
     QCOMPARE(rect.at(1).toDouble(), 2.0);
     QCOMPARE(rect.at(2).toDouble(), 3.0);
     QCOMPARE(rect.at(3).toDouble(), 4.0);
+}
+
+void QmlAgentIntegrationTest::uiQueryDefaultsToVisibleNodes()
+{
+    QString errorMessage;
+    SmokeAppRunner smoke;
+    QVERIFY2(smoke.start(&errorMessage), qPrintable(errorMessage));
+
+    QQmlDebugConnection connection;
+    QmlAgentDebugClient client(&connection);
+    QVERIFY2(connectToQmlAgent(smoke.port(), &connection, &client, &errorMessage),
+             qPrintable(errorMessage));
+
+    const auto defaultResponse = invoke(&client, QStringLiteral("UI.query"), {
+        { QStringLiteral("selector"), QStringLiteral("id=\"hiddenProbe\"") },
+        { QStringLiteral("includeSource"), false },
+    }, 1, &errorMessage);
+    QVERIFY2(defaultResponse.has_value(), qPrintable(errorMessage));
+    QCOMPARE(defaultResponse->value(QStringLiteral("result")).toObject()
+                     .value(QStringLiteral("matches")).toArray().size(),
+             0);
+
+    const auto invisibleResponse = invoke(&client, QStringLiteral("UI.query"), {
+        { QStringLiteral("selector"), QStringLiteral("id=\"hiddenProbe\"") },
+        { QStringLiteral("includeInvisible"), true },
+        { QStringLiteral("includeSource"), false },
+    }, 2, &errorMessage);
+    QVERIFY2(invisibleResponse.has_value(), qPrintable(errorMessage));
+    const QJsonArray matches = invisibleResponse->value(QStringLiteral("result")).toObject()
+            .value(QStringLiteral("matches")).toArray();
+    QCOMPARE(matches.size(), 1);
+    QCOMPARE(matches.at(0).toObject().value(QStringLiteral("qmlId")).toString(),
+             QStringLiteral("hiddenProbe"));
 }
 
 void QmlAgentIntegrationTest::sourceResolverClassifiesLoadedDelegateAndDynamicNodes()
@@ -4735,6 +4770,63 @@ void QmlAgentIntegrationTest::referenceClientReportsSingleClientConflict()
         mcpClient.kill();
         mcpClient.waitForFinished();
     }
+}
+
+void QmlAgentIntegrationTest::referenceClientMcpRefusesExistingLocalSocketPath()
+{
+    const QString qmlagentMcp = qmlagentMcpExecutable();
+    QVERIFY2(!qmlagentMcp.isEmpty(), "Missing qmlagent-mcp test binary path.");
+
+    QTemporaryDir dir;
+    QVERIFY2(dir.isValid(), qPrintable(dir.errorString()));
+    const QString path = dir.filePath(QStringLiteral("not-a-socket"));
+    QFile existing(path);
+    QVERIFY(existing.open(QIODevice::WriteOnly));
+    QCOMPARE(existing.write("keep"), qint64(4));
+    existing.close();
+
+    QProcess client;
+    client.setProcessChannelMode(QProcess::MergedChannels);
+    client.start(qmlagentMcp, {
+        QStringLiteral("--timeout"), QString::number(250),
+    });
+    QVERIFY2(client.waitForStarted(), qPrintable(client.errorString()));
+
+    auto writeRequest = [&](const QJsonObject &request) {
+        client.write(compactObject(request));
+        client.write("\n");
+        QVERIFY2(client.waitForBytesWritten(RequestTimeoutMs), qPrintable(client.errorString()));
+    };
+
+    writeRequest(mcpRequest(1, QStringLiteral("initialize")));
+    writeRequest(mcpToolCall(2, QStringLiteral("qmlagent.connect_local_socket"), {
+        { QStringLiteral("path"), path },
+        { QStringLiteral("timeoutMs"), 250 },
+    }));
+    QByteArray output = waitForOutput(&client, QByteArrayLiteral("\"id\":2"));
+    writeRequest(mcpRequest(3, QStringLiteral("shutdown")));
+    output += waitForOutput(&client, QByteArrayLiteral("\"id\":3"));
+    writeRequest({
+        { QStringLiteral("jsonrpc"), QStringLiteral("2.0") },
+        { QStringLiteral("method"), QStringLiteral("notifications/exit") },
+    });
+    if (!client.waitForFinished(ProcessShutdownTimeoutMs)) {
+        client.kill();
+        client.waitForFinished();
+    }
+
+    const QHash<int, QJsonObject> responses = parseMcpResponses(output);
+    QVERIFY2(responses.contains(2), output.constData());
+    const QJsonObject connectResult = responses.value(2).value(QStringLiteral("result")).toObject()
+            .value(QStringLiteral("structuredContent")).toObject();
+    QCOMPARE(connectResult.value(QStringLiteral("connected")).toBool(), false);
+    QVERIFY2(connectResult.value(QStringLiteral("lastError")).toString()
+                     .contains(QStringLiteral("Refusing to listen on existing local socket path")),
+             output.constData());
+
+    QFile kept(path);
+    QVERIFY(kept.open(QIODevice::ReadOnly));
+    QCOMPARE(kept.readAll(), QByteArrayLiteral("keep"));
 }
 
 void QmlAgentIntegrationTest::referenceClientMcpConnectsLocalSocket()

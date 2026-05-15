@@ -71,6 +71,14 @@ Window {
     }
 
     Rectangle {
+        id: hiddenProbe
+        objectName: "smoke.hiddenProbe"
+        visible: false
+        width: 20
+        height: 20
+    }
+
+    Rectangle {
         id: scaledProbe
         objectName: "smoke.scaledProbe"
         x: 260
