@@ -39,12 +39,14 @@
 #include <cerrno>
 #include <cstdio>
 #include <fcntl.h>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <signal.h>
 #include <unistd.h>
 
 static constexpr int DefaultMcpTargetPort = 3768;
+static constexpr int LauncherControlReplySlackMs = 1000;
 
 using QmlAgentMcp::jsonError;
 using QmlAgentMcp::jsonResponse;
@@ -582,6 +584,30 @@ static QJsonObject sendLauncherControlRequest(const QJsonObject &metadata, int t
     return {};
 }
 
+static int addLauncherReplySlack(int semanticTimeoutMs)
+{
+    const int boundedSemanticTimeout =
+            qMin(semanticTimeoutMs,
+                 std::numeric_limits<int>::max() - LauncherControlReplySlackMs);
+    return boundedSemanticTimeout + LauncherControlReplySlackMs;
+}
+
+static int launcherControlTimeoutMs(const QString &method, const QJsonObject &params,
+                                    int fallbackTimeoutMs)
+{
+    if (method != QLatin1String("QmlAgent.request"))
+        return fallbackTimeoutMs;
+
+    const QString targetMethod = params.value(QStringLiteral("method")).toString();
+    if (targetMethod != QLatin1String("UI.waitFor"))
+        return fallbackTimeoutMs;
+
+    const QJsonObject targetParams = params.value(QStringLiteral("params")).toObject();
+    const int semanticTimeoutMs = qMax(0, targetParams.value(QStringLiteral("timeoutMs"))
+                                               .toInt(fallbackTimeoutMs));
+    return qMax(fallbackTimeoutMs, addLauncherReplySlack(semanticTimeoutMs));
+}
+
 static bool hasLauncherControlEndpoint(const QJsonObject &metadata)
 {
     return !metadata.value(QStringLiteral("controlMailbox")).toString().isEmpty();
@@ -859,7 +885,8 @@ static int runCtlSubcommand(const QStringList &arguments)
                 << "  qmlagentctl query <selector> [--property name] [--format compact|pretty]\n"
                 << "  qmlagentctl binding <selector> --property name [--format compact|pretty]\n"
                 << "  qmlagentctl click <selector>\n"
-                << "  qmlagentctl replace-text <selector> --text value [--clear]\n"
+                << "  qmlagentctl type <selector> --text value\n"
+                << "  qmlagentctl clear-text <selector>\n"
                 << "  qmlagentctl wait <selector> --state found|notFound [--timeout ms]\n"
                 << "  qmlagentctl screenshot [--window-id n] [--scale 0.5] [--region x,y,w,h] [--include-data] [--out file.png]\n"
                 << "  qmlagentctl reload-preview\n"
@@ -902,7 +929,8 @@ static int runCtlSubcommand(const QStringList &arguments)
         QStringLiteral("inspect"),
         QStringLiteral("binding"),
         QStringLiteral("click"),
-        QStringLiteral("replace-text"),
+        QStringLiteral("type"),
+        QStringLiteral("clear-text"),
         QStringLiteral("wait"),
         QStringLiteral("screenshot"),
     };
@@ -994,17 +1022,24 @@ static int runCtlSubcommand(const QStringList &arguments)
                 return fail(QStringLiteral("qmlagentctl click requires a selector."));
             method = QStringLiteral("Input.clickNode");
             params = { { QStringLiteral("selector"), arguments.at(2) } };
-        } else if (command == QLatin1String("replace-text")) {
+        } else if (command == QLatin1String("type")) {
             if (arguments.size() < 3)
-                return fail(QStringLiteral("qmlagentctl replace-text requires a selector."));
-            const bool clear = arguments.contains(QStringLiteral("--clear"));
+                return fail(QStringLiteral("qmlagentctl type requires a selector."));
+            if (!arguments.contains(QStringLiteral("--text")))
+                return fail(QStringLiteral("qmlagentctl type requires --text value."));
             const QString text = argumentValue(arguments, QStringLiteral("--text"));
-            if (!clear && text.isEmpty())
-                return fail(QStringLiteral("qmlagentctl replace-text requires --text value or --clear."));
             method = QStringLiteral("Input.typeText");
             params = {
                 { QStringLiteral("selector"), arguments.at(2) },
-                { QStringLiteral("text"), clear ? QString() : text },
+                { QStringLiteral("text"), text },
+            };
+        } else if (command == QLatin1String("clear-text")) {
+            if (arguments.size() < 3)
+                return fail(QStringLiteral("qmlagentctl clear-text requires a selector."));
+            method = QStringLiteral("Input.typeText");
+            params = {
+                { QStringLiteral("selector"), arguments.at(2) },
+                { QStringLiteral("text"), QString() },
                 { QStringLiteral("replaceExisting"), true },
             };
         } else if (command == QLatin1String("wait")) {
@@ -1072,7 +1107,8 @@ static int runCtlSubcommand(const QStringList &arguments)
     }
 
     QString controlError;
-    const QJsonObject response = sendLauncherControlRequest(launcher.metadata, timeoutMs,
+    const int controlTimeoutMs = launcherControlTimeoutMs(controlMethod, controlParams, timeoutMs);
+    const QJsonObject response = sendLauncherControlRequest(launcher.metadata, controlTimeoutMs,
                                                             controlMethod, controlParams,
                                                             &controlError);
     if (!controlError.isEmpty())
@@ -1550,6 +1586,11 @@ private:
                                      arguments.value(QStringLiteral("includeFrameworkIssues")).toBool());
             if (arguments.contains(QStringLiteral("issueScope")))
                 targetParams->insert(QStringLiteral("issueScope"), arguments.value(QStringLiteral("issueScope")));
+            targetParams->insert(QStringLiteral("verbosity"),
+                                 arguments.value(QStringLiteral("verbosity"))
+                                         .toString(QStringLiteral("summary")));
+            if (arguments.contains(QStringLiteral("maxIssues")))
+                targetParams->insert(QStringLiteral("maxIssues"), arguments.value(QStringLiteral("maxIssues")));
             return true;
         }
         if (name == QLatin1String("qmlagent.diagnostics_analyze_node")) {
@@ -1691,15 +1732,10 @@ private:
             }
             return true;
         }
-        if (name == QLatin1String("qmlagent.input_replace_text")) {
+        if (name == QLatin1String("qmlagent.input_clear_text")) {
             *targetMethod = QStringLiteral("Input.typeText");
-            const bool clear = arguments.value(QStringLiteral("clear")).toBool(false);
-            if (!clear && !arguments.contains(QStringLiteral("text"))) {
-                *error = QStringLiteral("Provide text or clear=true.");
-                return false;
-            }
             *targetParams = {
-                { QStringLiteral("text"), clear ? QJsonValue(QString()) : arguments.value(QStringLiteral("text")) },
+                { QStringLiteral("text"), QString() },
                 { QStringLiteral("replaceExisting"), true },
             };
             const QJsonObject ref = nodeRef(arguments, error);
@@ -2212,11 +2248,15 @@ private:
                                          const QJsonObject &params, int timeoutMs,
                                          QString *error) const
     {
+        const QJsonObject controlParams{
+            { QStringLiteral("method"), method },
+            { QStringLiteral("params"), params },
+        };
         const QJsonObject controlResponse = sendLauncherControlRequest(
-                launcher.metadata, timeoutMs, QStringLiteral("QmlAgent.request"), {
-                    { QStringLiteral("method"), method },
-                    { QStringLiteral("params"), params },
-                }, error);
+                launcher.metadata,
+                launcherControlTimeoutMs(QStringLiteral("QmlAgent.request"), controlParams,
+                                         timeoutMs),
+                QStringLiteral("QmlAgent.request"), controlParams, error);
         if (!error->isEmpty())
             return {};
         return controlResponse.value(QStringLiteral("result")).toObject();

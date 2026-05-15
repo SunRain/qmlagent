@@ -47,6 +47,17 @@ Window {
         }
     }
 
+    Rectangle {
+        id: scaledProbe
+        objectName: "smoke.scaledProbe"
+        x: 260
+        width: 100
+        height: 40
+        scale: 0.5
+        transformOrigin: Item.TopLeft
+        color: "#d29922"
+    }
+
     Loader {
         objectName: "smoke.loader"
         y: 60

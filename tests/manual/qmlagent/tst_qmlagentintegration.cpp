@@ -1452,6 +1452,18 @@ void QmlAgentIntegrationTest::uiQuerySerializesRequestedValueTypes()
     QCOMPARE(rectangleProperties.value(QStringLiteral("color")).toString(),
              QStringLiteral("#1f6feb"));
 
+    const auto scaledResponse = invoke(&client, QStringLiteral("UI.query"), {
+        { QStringLiteral("selector"), QStringLiteral("objectName=\"smoke.scaledProbe\"") },
+        { QStringLiteral("includeSource"), false },
+    }, 2, &errorMessage);
+    QVERIFY2(scaledResponse.has_value(), qPrintable(errorMessage));
+    const QJsonArray scaledMatches = scaledResponse->value(QStringLiteral("result")).toObject()
+            .value(QStringLiteral("matches")).toArray();
+    QCOMPARE_EQ(scaledMatches.size(), 1);
+    const QJsonArray scaledBox = scaledMatches.at(0).toObject().value(QStringLiteral("bbox")).toArray();
+    QCOMPARE(scaledBox.at(2).toDouble(), 50.0);
+    QCOMPARE(scaledBox.at(3).toDouble(), 20.0);
+
     const auto valueTypeResponse = invoke(&client, QStringLiteral("UI.query"), {
         { QStringLiteral("selector"), QStringLiteral("id=\"valueTypeItem\"") },
         { QStringLiteral("includeSource"), false },
@@ -1462,7 +1474,7 @@ void QmlAgentIntegrationTest::uiQuerySerializesRequestedValueTypes()
             QStringLiteral("agentSize"),
             QStringLiteral("agentRect"),
         } },
-    }, 2, &errorMessage);
+    }, 3, &errorMessage);
     QVERIFY2(valueTypeResponse.has_value(), qPrintable(errorMessage));
 
     const QJsonArray valueTypeMatches = valueTypeResponse->value(QStringLiteral("result")).toObject()
@@ -2626,9 +2638,38 @@ void QmlAgentIntegrationTest::diagnosticsReportLayoutFailures()
                       .value(QStringLiteral("blameChain")).toArray().isEmpty(),
              "Expected outside viewport diagnostic to include factual blame chain.");
 
+    const auto summaryResponse = invoke(&client, QStringLiteral("Diagnostics.analyzeTree"), {
+        { QStringLiteral("verbosity"), QStringLiteral("summary") },
+        { QStringLiteral("maxIssues"), 1 },
+    }, 3, &errorMessage);
+    QVERIFY2(summaryResponse.has_value(), qPrintable(errorMessage));
+    const QJsonObject summaryResult = summaryResponse->value(QStringLiteral("result")).toObject();
+    const QJsonObject compactSummary = summaryResult.value(QStringLiteral("summary")).toObject();
+    QCOMPARE(compactSummary.value(QStringLiteral("verbosity")).toString(),
+             QStringLiteral("summary"));
+    QCOMPARE(compactSummary.value(QStringLiteral("issueCount")).toInt(), issues.size());
+    QCOMPARE(compactSummary.value(QStringLiteral("returnedIssueCount")).toInt(),
+             qMin(1, issues.size()));
+    QCOMPARE(compactSummary.value(QStringLiteral("moreAvailable")).toBool(), issues.size() > 1);
+    QVERIFY2(compactSummary.value(QStringLiteral("omittedFields")).toArray()
+                     .contains(QStringLiteral("evidence")),
+             qPrintable(QString::fromUtf8(QJsonDocument(summaryResult)
+                                                  .toJson(QJsonDocument::Compact))));
+    const QJsonArray compactIssues = summaryResult.value(QStringLiteral("issues")).toArray();
+    QCOMPARE(compactIssues.size(), qMin(1, issues.size()));
+    if (!compactIssues.isEmpty()) {
+        const QJsonObject compactIssue = compactIssues.at(0).toObject();
+        QVERIFY2(!compactIssue.contains(QStringLiteral("evidence")),
+                 qPrintable(QString::fromUtf8(QJsonDocument(compactIssue)
+                                                      .toJson(QJsonDocument::Compact))));
+        QVERIFY2(!compactIssue.contains(QStringLiteral("blameChain")),
+                 qPrintable(QString::fromUtf8(QJsonDocument(compactIssue)
+                                                      .toJson(QJsonDocument::Compact))));
+    }
+
     const auto overlapOnlyResponse = invoke(&client, QStringLiteral("Diagnostics.analyzeTree"), {
         { QStringLiteral("checks"), QJsonArray{ QStringLiteral("overlap") } },
-    }, 3, &errorMessage);
+    }, 4, &errorMessage);
     QVERIFY2(overlapOnlyResponse.has_value(), qPrintable(errorMessage));
     const QJsonObject overlapOnlyResult =
             overlapOnlyResponse->value(QStringLiteral("result")).toObject();
@@ -3539,24 +3580,40 @@ void QmlAgentIntegrationTest::referenceClientConvenienceCommands()
     });
     QVERIFY2(workflowKeyOutput.contains("\"delivered\":true"), workflowKeyOutput.constData());
 
-    const QByteArray replaceTextOutput = runClient({
-        QStringLiteral("replace-text"),
+    const QByteArray clearTextOutput = runClient({
+        QStringLiteral("clear-text"),
         QStringLiteral("objectName=\"smoke.textInput\""),
-        QStringLiteral("--text"), QStringLiteral("client"),
         QStringLiteral("--format"), QStringLiteral("compact"),
     });
-    QVERIFY2(replaceTextOutput.contains("\"delivered\":true"), replaceTextOutput.constData());
-    QVERIFY2(replaceTextOutput.contains("\"selectionApplied\":true"),
-             replaceTextOutput.constData());
+    QVERIFY2(clearTextOutput.contains("\"delivered\":true"), clearTextOutput.constData());
+    QVERIFY2(clearTextOutput.contains("\"selectionApplied\":true"),
+             clearTextOutput.constData());
 
-    const QByteArray replaceVerifyOutput = runClient({
+    const QByteArray clearVerifyOutput = runClient({
         QStringLiteral("query"),
         QStringLiteral("objectName=\"smoke.textInput\""),
         QStringLiteral("--property"), QStringLiteral("text"),
         QStringLiteral("--format"), QStringLiteral("compact"),
     });
-    QVERIFY2(replaceVerifyOutput.contains("\"text\":\"client\""),
-             replaceVerifyOutput.constData());
+    QVERIFY2(clearVerifyOutput.contains("\"text\":\"\""),
+             clearVerifyOutput.constData());
+
+    const QByteArray typeTextOutput = runClient({
+        QStringLiteral("type"),
+        QStringLiteral("objectName=\"smoke.textInput\""),
+        QStringLiteral("--text"), QStringLiteral("client"),
+        QStringLiteral("--format"), QStringLiteral("compact"),
+    });
+    QVERIFY2(typeTextOutput.contains("\"delivered\":true"), typeTextOutput.constData());
+
+    const QByteArray typeVerifyOutput = runClient({
+        QStringLiteral("query"),
+        QStringLiteral("objectName=\"smoke.textInput\""),
+        QStringLiteral("--property"), QStringLiteral("text"),
+        QStringLiteral("--format"), QStringLiteral("compact"),
+    });
+    QVERIFY2(typeVerifyOutput.contains("\"text\":\"client\""),
+             typeVerifyOutput.constData());
 
     const QByteArray verifyOutput = runClient({
         QStringLiteral("query"),
@@ -3933,7 +3990,7 @@ void QmlAgentIntegrationTest::referenceClientMcpPersistentMode()
     bool sawInputMouse = false;
     bool sawInputTouch = false;
     bool sawInputWheel = false;
-    bool sawInputReplaceText = false;
+    bool sawInputClearText = false;
     bool sawRuntimeEnableMutation = false;
     bool sawRuntimeSetProperty = false;
     bool sawRuntimeInvokeMethod = false;
@@ -3952,7 +4009,7 @@ void QmlAgentIntegrationTest::referenceClientMcpPersistentMode()
         sawInputMouse |= name == QLatin1String("qmlagent.input_mouse");
         sawInputTouch |= name == QLatin1String("qmlagent.input_touch");
         sawInputWheel |= name == QLatin1String("qmlagent.input_wheel");
-        sawInputReplaceText |= name == QLatin1String("qmlagent.input_replace_text");
+        sawInputClearText |= name == QLatin1String("qmlagent.input_clear_text");
         sawRuntimeEnableMutation |= name == QLatin1String("qmlagent.runtime_enable_mutation");
         sawRuntimeSetProperty |= name == QLatin1String("qmlagent.runtime_set_property");
         sawRuntimeInvokeMethod |= name == QLatin1String("qmlagent.runtime_invoke_method");
@@ -3970,7 +4027,7 @@ void QmlAgentIntegrationTest::referenceClientMcpPersistentMode()
     QVERIFY2(sawInputMouse, output.constData());
     QVERIFY2(sawInputTouch, output.constData());
     QVERIFY2(sawInputWheel, output.constData());
-    QVERIFY2(sawInputReplaceText, output.constData());
+    QVERIFY2(sawInputClearText, output.constData());
     QVERIFY2(sawRuntimeEnableMutation, output.constData());
     QVERIFY2(sawRuntimeSetProperty, output.constData());
     QVERIFY2(sawRuntimeInvokeMethod, output.constData());

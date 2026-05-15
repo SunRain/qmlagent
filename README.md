@@ -166,7 +166,7 @@ id="tableCell" row=0 column=1
 inspect:   qmlagent.ui_query / qmlagent.ui_get_tree
 diagnose:  qmlagent.diagnostics_analyze_node / diagnostics_analyze_tree
 source:    qmlagent.source_resolve / Diagnostics.analyzeBinding
-act:       qmlagent.input_click / input_drag / input_wheel / input_type_text
+act:       qmlagent.input_click / input_drag / input_wheel / input_clear_text / input_type_text
 wait:      qmlagent.ui_wait_for or qmlagent.workflow_click_and_wait
 verify:    UI / diagnostics / log evidence, not screenshots
 ```
@@ -202,7 +202,8 @@ Use `qmlagentctl` when MCP is unavailable or a shell command is simpler:
 "$QT_BIN/qmlagentctl" query 'id="saveButton"' --property text --format compact
 "$QT_BIN/qmlagentctl" wait 'id="detailsPopup"' --state found --timeout 1000
 "$QT_BIN/qmlagentctl" click 'id="saveButton"'
-"$QT_BIN/qmlagentctl" replace-text 'id="urlField"' --text 'https://qt.io'
+"$QT_BIN/qmlagentctl" clear-text 'id="urlField"'
+"$QT_BIN/qmlagentctl" type 'id="urlField"' --text 'https://qt.io'
 "$QT_BIN/qmlagentctl" binding 'id="saveButton"' --property y --format compact
 "$QT_BIN/qmlagentctl" screenshot --out fallback.png --scale 0.5
 "$QT_BIN/qmlagentctl" stop

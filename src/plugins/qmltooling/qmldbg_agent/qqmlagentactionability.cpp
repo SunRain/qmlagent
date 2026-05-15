@@ -26,7 +26,7 @@ static QRectF itemBoxInWindow(const QQuickItem *item)
 {
     if (!item)
         return {};
-    return QRectF(item->mapToScene(QPointF(0, 0)), QSizeF(item->width(), item->height()));
+    return item->mapRectToScene(QRectF(QPointF(0, 0), QSizeF(item->width(), item->height())));
 }
 
 static QString objectLabel(const QObject *object)

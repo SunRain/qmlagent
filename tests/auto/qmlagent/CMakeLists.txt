@@ -30,6 +30,10 @@ target_include_directories(tst_qmlagentprotocol PRIVATE
     ${PROJECT_SOURCE_DIR}/tools/qmlagent
 )
 
+target_compile_definitions(tst_qmlagentprotocol PRIVATE
+    QMLAGENT_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+
 target_link_libraries(tst_qmlagentprotocol PRIVATE
     Qt6::Core
     Qt6::Test

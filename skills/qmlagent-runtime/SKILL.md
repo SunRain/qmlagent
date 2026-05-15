@@ -93,7 +93,8 @@ available:
 "$QT_BIN/qmlagentctl" query 'id="saveButton"' --property text --format compact
 "$QT_BIN/qmlagentctl" wait 'id="detailsPopup"' --state found --timeout 1000
 "$QT_BIN/qmlagentctl" click 'id="saveButton"'
-"$QT_BIN/qmlagentctl" replace-text 'id="urlField"' --text 'go.dev'
+"$QT_BIN/qmlagentctl" clear-text 'id="urlField"'
+"$QT_BIN/qmlagentctl" type 'id="urlField"' --text 'go.dev'
 "$QT_BIN/qmlagentctl" binding 'id="saveButton"' --property y --format compact
 "$QT_BIN/qmlagentctl" call --help
 "$QT_BIN/qmlagentctl" reload-preview
@@ -122,8 +123,9 @@ base64 does not enter the agent context. For MCP screenshot bytes, pass
   expression, source location, and dependency limitations.
 - Use `UI.waitFor` or workflow tools for transitions, popups, loaders,
   animations, and async post-action state. Do not use sleeps.
-- For replacing text, use native `qmlagent.input_replace_text` or shell
-  `qmlagentctl replace-text`, then verify with `UI.query` or `UI.waitFor`.
+- To enter new text into an occupied field, use native `qmlagent.input_clear_text` followed by
+  `qmlagent.input_type_text`, or shell `qmlagentctl clear-text` followed by
+  `qmlagentctl type`, then verify with `UI.query` or `UI.waitFor`.
 - Use input/workflow results plus `UI.query`, diagnostics, logs, or source
   evidence as proof. Runtime mutation is setup-only.
 - If QML fails to load, inspect logs/status first. A dead process cannot answer

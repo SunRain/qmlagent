@@ -35,7 +35,7 @@ static QRectF itemBoxInWindow(const QQuickItem *item)
 {
     if (!item)
         return {};
-    return QRectF(item->mapToScene(QPointF(0, 0)), QSizeF(item->width(), item->height()));
+    return item->mapRectToScene(QRectF(QPointF(0, 0), QSizeF(item->width(), item->height())));
 }
 
 static QJsonObject issue(const QString &id, const QString &severity, double confidence,
@@ -293,6 +293,70 @@ static QJsonObject suppressedFrameworkIssueSummary(const QJsonObject &node,
     if (issue.contains(QStringLiteral("sourceLocation")))
         summary.insert(QStringLiteral("sourceLocation"), issue.value(QStringLiteral("sourceLocation")));
     return summary;
+}
+
+static QJsonObject compactNodeSnapshot(const QJsonObject &node)
+{
+    QJsonObject compact;
+    const QStringList fields{
+        QStringLiteral("nodeId"),
+        QStringLiteral("qmlId"),
+        QStringLiteral("objectName"),
+        QStringLiteral("type"),
+        QStringLiteral("text"),
+        QStringLiteral("bbox"),
+        QStringLiteral("insideViewport"),
+        QStringLiteral("sourceLocation"),
+    };
+    for (const QString &field : fields) {
+        if (node.contains(field))
+            compact.insert(field, node.value(field));
+    }
+    return compact;
+}
+
+static QJsonObject compactIssueSummary(const QJsonObject &issue)
+{
+    QJsonObject compact;
+    const QStringList fields{
+        QStringLiteral("id"),
+        QStringLiteral("severity"),
+        QStringLiteral("confidence"),
+        QStringLiteral("nodeId"),
+        QStringLiteral("message"),
+        QStringLiteral("sourceLocation"),
+        QStringLiteral("bbox"),
+        QStringLiteral("viewport"),
+        QStringLiteral("property"),
+    };
+    for (const QString &field : fields) {
+        if (issue.contains(field))
+            compact.insert(field, issue.value(field));
+    }
+    if (issue.contains(QStringLiteral("target")))
+        compact.insert(QStringLiteral("target"),
+                       compactNodeSnapshot(issue.value(QStringLiteral("target")).toObject()));
+    return compact;
+}
+
+static QJsonArray compactIssueSummaries(const QJsonArray &issues, int maxIssues)
+{
+    QJsonArray compact;
+    const int limit = qBound(0, maxIssues, issues.size());
+    for (int i = 0; i < limit; ++i)
+        compact.append(compactIssueSummary(issues.at(i).toObject()));
+    return compact;
+}
+
+static QJsonArray analyzeTreeSummaryOmittedFields()
+{
+    return {
+        QStringLiteral("evidence"),
+        QStringLiteral("blameChain"),
+        QStringLiteral("repairHints"),
+        QStringLiteral("bindingProvenance"),
+        QStringLiteral("target.children"),
+    };
 }
 
 static QJsonObject blameEntry(const QQuickItem *item, const QString &evidence)
@@ -1442,22 +1506,51 @@ QJsonObject QQmlAgentDiagnostics::analyzeTree(const QJsonObject &params, QQmlAge
         }
     }
 
+    QJsonObject summary{
+        { QStringLiteral("ok"), issues.isEmpty() },
+        { QStringLiteral("issueCount"), issues.size() },
+        { QStringLiteral("logEntryCount"), logEntryCount },
+        { QStringLiteral("promotedLogIssueCount"), promotedLogIssueCount },
+        { QStringLiteral("ignoredLogEntryCount"), ignoredLogEntryCount },
+        { QStringLiteral("issueScope"),
+          includeFrameworkIssues ? QStringLiteral("all") : QStringLiteral("application") },
+        { QStringLiteral("suppressedFrameworkIssueCount"), suppressedFrameworkIssueCount },
+        { QStringLiteral("suppressedFrameworkIssueDetailsTruncated"),
+          suppressedFrameworkIssueCount > suppressedFrameworkIssues.size() },
+        { QStringLiteral("suppressedFrameworkIssues"), suppressedFrameworkIssues },
+        { QStringLiteral("ran"), ranChecks(checks) },
+    };
+
+    if (params.value(QStringLiteral("verbosity")).toString() == QLatin1String("summary")) {
+        const int maxIssues = qBound(0, params.value(QStringLiteral("maxIssues")).toInt(20), 100);
+        const QJsonArray returnedIssues = compactIssueSummaries(issues, maxIssues);
+        summary.insert(QStringLiteral("verbosity"), QStringLiteral("summary"));
+        summary.insert(QStringLiteral("returnedIssueCount"), returnedIssues.size());
+        summary.insert(QStringLiteral("omittedIssueCount"), issues.size() - returnedIssues.size());
+        summary.insert(QStringLiteral("moreAvailable"), issues.size() > returnedIssues.size());
+        summary.insert(QStringLiteral("omittedFields"), analyzeTreeSummaryOmittedFields());
+        if (issues.size() > returnedIssues.size()) {
+            summary.insert(QStringLiteral("nextHints"), QJsonArray{
+                QJsonObject{
+                    { QStringLiteral("method"), QStringLiteral("Diagnostics.analyzeTree") },
+                    { QStringLiteral("params"), QJsonObject{
+                        { QStringLiteral("verbosity"), QStringLiteral("evidence") },
+                        { QStringLiteral("includeInvisible"),
+                          params.value(QStringLiteral("includeInvisible")).toBool(false) },
+                    } },
+                },
+            });
+        }
+        return {
+            { QStringLiteral("issues"), returnedIssues },
+            { QStringLiteral("summary"), summary },
+        };
+    }
+
+    summary.insert(QStringLiteral("verbosity"), QStringLiteral("evidence"));
     return {
         { QStringLiteral("issues"), issues },
-        { QStringLiteral("summary"), QJsonObject{
-            { QStringLiteral("ok"), issues.isEmpty() },
-            { QStringLiteral("issueCount"), issues.size() },
-            { QStringLiteral("logEntryCount"), logEntryCount },
-            { QStringLiteral("promotedLogIssueCount"), promotedLogIssueCount },
-            { QStringLiteral("ignoredLogEntryCount"), ignoredLogEntryCount },
-            { QStringLiteral("issueScope"),
-              includeFrameworkIssues ? QStringLiteral("all") : QStringLiteral("application") },
-            { QStringLiteral("suppressedFrameworkIssueCount"), suppressedFrameworkIssueCount },
-            { QStringLiteral("suppressedFrameworkIssueDetailsTruncated"),
-              suppressedFrameworkIssueCount > suppressedFrameworkIssues.size() },
-            { QStringLiteral("suppressedFrameworkIssues"), suppressedFrameworkIssues },
-            { QStringLiteral("ran"), ranChecks(checks) },
-        } },
+        { QStringLiteral("summary"), summary },
     };
 }
 

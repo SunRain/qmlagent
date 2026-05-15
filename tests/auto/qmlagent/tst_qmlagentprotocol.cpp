@@ -4,6 +4,7 @@
 #include "qqmlagentprotocol_p.h"
 #include "qmlagentmcpprotocol.h"
 
+#include <QtCore/qfile.h>
 #include <QtCore/qjsondocument.h>
 #include <QtCore/qset.h>
 #include <QtTest/qtest.h>
@@ -21,6 +22,7 @@ private slots:
     void formatsError();
     void formatsEvent();
     void mcpToolSchemasExposeAgentFirstContracts();
+    void agentFacingSurfaceDoesNotAdvertiseRetiredNames();
 };
 
 static QJsonObject objectFromJson(const QByteArray &json)
@@ -114,6 +116,23 @@ static QJsonObject mcpToolByName(const QString &name)
     return {};
 }
 
+static QSet<QString> mcpToolNames()
+{
+    QSet<QString> names;
+    const QJsonArray tools = QmlAgentMcp::toolList();
+    for (const QJsonValue &toolValue : tools)
+        names.insert(toolValue.toObject().value(QStringLiteral("name")).toString());
+    return names;
+}
+
+static QString sourceFileContents(const QString &relativePath)
+{
+    QFile file(QString::fromUtf8(QMLAGENT_SOURCE_DIR) + QLatin1Char('/') + relativePath);
+    if (!file.open(QIODevice::ReadOnly))
+        return {};
+    return QString::fromUtf8(file.readAll());
+}
+
 void tst_QQmlAgentProtocol::mcpToolSchemasExposeAgentFirstContracts()
 {
     const QJsonArray tools = QmlAgentMcp::toolList();
@@ -165,6 +184,45 @@ void tst_QQmlAgentProtocol::mcpToolSchemasExposeAgentFirstContracts()
     QVERIFY(waitOperators.contains(QStringLiteral("contains")));
     QVERIFY(waitOperators.contains(QStringLiteral("startsWith")));
     QVERIFY(waitOperators.contains(QStringLiteral("endsWith")));
+
+    const QJsonObject diagnosticsTree = mcpToolByName(QStringLiteral("qmlagent.diagnostics_analyze_tree"));
+    QVERIFY(!diagnosticsTree.isEmpty());
+    const QJsonObject diagnosticsProperties = diagnosticsTree.value(QStringLiteral("inputSchema"))
+            .toObject().value(QStringLiteral("properties")).toObject();
+    QCOMPARE(diagnosticsProperties.value(QStringLiteral("verbosity")).toObject()
+                     .value(QStringLiteral("default")).toString(),
+             QStringLiteral("summary"));
+    QVERIFY(diagnosticsProperties.value(QStringLiteral("maxIssues")).isObject());
+}
+
+void tst_QQmlAgentProtocol::agentFacingSurfaceDoesNotAdvertiseRetiredNames()
+{
+    const QSet<QString> toolNames = mcpToolNames();
+    QVERIFY(toolNames.contains(QStringLiteral("qmlagent.input_type_text")));
+    QVERIFY(toolNames.contains(QStringLiteral("qmlagent.input_clear_text")));
+    QVERIFY(!toolNames.contains(QStringLiteral("qmlagent.input_replace_text")));
+
+    const QString readme = sourceFileContents(QStringLiteral("README.md"));
+    const QString skill = sourceFileContents(QStringLiteral("skills/qmlagent-runtime/SKILL.md"));
+    const QString cli = sourceFileContents(QStringLiteral("tools/qmlagent/main.cpp"));
+    QVERIFY2(!readme.isEmpty(), "README.md must be readable for surface drift checks.");
+    QVERIFY2(!skill.isEmpty(), "qmlagent-runtime skill must be readable for surface drift checks.");
+    QVERIFY2(!cli.isEmpty(), "qmlagentctl source must be readable for surface drift checks.");
+
+    const QStringList agentFacingFiles{ readme, skill, cli };
+    for (const QString &contents : agentFacingFiles) {
+        QVERIFY2(!contents.contains(QStringLiteral("replace-text")),
+                 qPrintable(contents.mid(qMax(0, contents.indexOf(QStringLiteral("replace-text")) - 80), 160)));
+        QVERIFY2(!contents.contains(QStringLiteral("input_replace_text")),
+                 qPrintable(contents.mid(qMax(0, contents.indexOf(QStringLiteral("input_replace_text")) - 80), 160)));
+    }
+
+    QVERIFY(readme.contains(QStringLiteral("clear-text")));
+    QVERIFY(readme.contains(QStringLiteral("type 'id=\"urlField\"' --text")));
+    QVERIFY(skill.contains(QStringLiteral("qmlagent.input_clear_text")));
+    QVERIFY(skill.contains(QStringLiteral("qmlagent.input_type_text")));
+    QVERIFY(cli.contains(QStringLiteral("qmlagentctl type <selector> --text value")));
+    QVERIFY(cli.contains(QStringLiteral("qmlagentctl clear-text <selector>")));
 }
 
 QTEST_GUILESS_MAIN(tst_QQmlAgentProtocol)

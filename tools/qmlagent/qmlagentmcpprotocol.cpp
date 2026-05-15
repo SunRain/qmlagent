@@ -190,13 +190,23 @@ QJsonArray toolList()
              QStringLiteral("Unsubscribe from QmlAgent UI.treeChanged events on this persistent connection."),
              schema({})),
         tool(QStringLiteral("qmlagent.diagnostics_analyze_tree"),
-             QStringLiteral("Analyze the runtime tree for structured layout/input/log issues. Defaults to application repair scope; pass includeFrameworkIssues:true or issueScope:\"all\" when developing Qt Quick Controls/framework internals."),
+             QStringLiteral("Analyze the runtime tree for structured layout/input/log issues. Defaults to application repair scope. Use verbosity:\"summary\" for bounded agent-loop output; use evidence/full only when patch-ready detail is needed. Pass includeFrameworkIssues:true or issueScope:\"all\" when developing Qt Quick Controls/framework internals."),
              schema({
                  { QStringLiteral("includeInvisible"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("boolean") } } },
                  { QStringLiteral("includeFrameworkIssues"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("boolean") } } },
+                 { QStringLiteral("maxIssues"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("integer") } } },
                  { QStringLiteral("issueScope"), QJsonObject{
                      { QStringLiteral("type"), QStringLiteral("string") },
                      { QStringLiteral("enum"), QJsonArray{ QStringLiteral("application"), QStringLiteral("all") } },
+                 } },
+                 { QStringLiteral("verbosity"), QJsonObject{
+                     { QStringLiteral("type"), QStringLiteral("string") },
+                     { QStringLiteral("default"), QStringLiteral("summary") },
+                     { QStringLiteral("enum"), QJsonArray{
+                         QStringLiteral("summary"),
+                         QStringLiteral("evidence"),
+                         QStringLiteral("full"),
+                     } },
                  } },
              })),
         tool(QStringLiteral("qmlagent.diagnostics_analyze_node"),
@@ -330,18 +340,12 @@ QJsonArray toolList()
                  { QStringLiteral("modifiers"), stringArray },
              }))),
         tool(QStringLiteral("qmlagent.input_type_text"),
-             QStringLiteral("Type text through synthetic key input, optionally targeting selector/nodeId first. If click-to-focus fails, call qmlagent.input_focus on the same selector/nodeId, then retry qmlagent.input_type_text; focus_failed results include nextHints."),
+             QStringLiteral("Type text through synthetic key input, optionally targeting selector/nodeId first. This appends/replaces according to the target's normal cursor/selection state; use qmlagent.input_clear_text first when you need an empty field. If click-to-focus fails, call qmlagent.input_focus on the same selector/nodeId, then retry qmlagent.input_type_text; focus_failed results include nextHints."),
              schema(withNodeRef({ { QStringLiteral("text"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("string") } } } }),
                     { QStringLiteral("text") })),
-        tool(QStringLiteral("qmlagent.input_replace_text"),
-             QStringLiteral("Replace the current text of a TextInput/TextField/TextArea-style target. This focuses the target, invokes its public selectAll() when available, then types through Qt key input; use clear:true to clear the field. Treat this as input setup evidence and verify the final text/state with qmlagent.ui_query or qmlagent.ui_wait_for."),
-             schema(withNodeRef({
-                 { QStringLiteral("text"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("string") } } },
-                 { QStringLiteral("clear"), QJsonObject{
-                     { QStringLiteral("type"), QStringLiteral("boolean") },
-                     { QStringLiteral("description"), QStringLiteral("When true, clear the field after selecting existing text. Either text or clear=true is required.") },
-                 } },
-             }))),
+        tool(QStringLiteral("qmlagent.input_clear_text"),
+             QStringLiteral("Clear a TextInput/TextField/TextArea-style target through the same Input.typeText path: focus target, select existing text when available, then delete through Qt key input. Use qmlagent.input_type_text afterward to enter new text, and verify final text/state with qmlagent.ui_query or qmlagent.ui_wait_for."),
+             schema(withNodeRef({}))),
         tool(QStringLiteral("qmlagent.workflow_click"),
              QStringLiteral("Click a target selector and verify an immediate expected state in one dispatcher-owned workflow report. Use verbosity=\"summary\" for normal agent loops; use full only when deep evidence is needed. For Drawer/Menu/Popup/Dialog transitions, loaders, animated controls, or delayed availability, use qmlagent.workflow_click_and_wait instead of this qmlagent.workflow_click tool."),
              schema({

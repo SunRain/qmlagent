@@ -39,8 +39,7 @@ static QRectF itemBoxInWindow(const QQuickItem *item)
 {
     if (!item)
         return {};
-    const QPointF topLeft = item->mapToScene(QPointF(0, 0));
-    return QRectF(topLeft, QSizeF(item->width(), item->height()));
+    return item->mapRectToScene(QRectF(QPointF(0, 0), QSizeF(item->width(), item->height())));
 }
 
 static QJsonArray rectArray(const QRectF &rect)
@@ -61,6 +60,37 @@ static QString prettyTypeName(QObject *object)
     if (!qmlType.isEmpty())
         return qmlType;
     return QString::fromUtf8(object->metaObject()->className());
+}
+
+static QJsonArray typeAliases(QObject *object, const QString &primaryType)
+{
+    QJsonArray aliases;
+    QSet<QString> seen{ primaryType };
+    const QMetaObject *metaObject = object ? object->metaObject() : nullptr;
+    while (metaObject) {
+        QString className = QString::fromUtf8(metaObject->className());
+        const int qmlTypeMarker = className.indexOf(QLatin1String("_QML"));
+        if (qmlTypeMarker > 0)
+            className.truncate(qmlTypeMarker);
+
+        const auto appendAlias = [&](const QString &alias) {
+            if (alias.isEmpty()
+                    || alias == QLatin1String("QObject")
+                    || alias == QLatin1String("QQuickItem")
+                    || seen.contains(alias)) {
+                return;
+            }
+            seen.insert(alias);
+            aliases.append(alias);
+        };
+
+        appendAlias(className);
+        if (className.startsWith(QLatin1String("QQuick")) && className.size() > 6)
+            appendAlias(className.mid(6));
+
+        metaObject = metaObject->superClass();
+    }
+    return aliases;
 }
 
 static QString qmlIdForObject(const QObject *object)
@@ -548,6 +578,7 @@ static QJsonObject nodeForObjectInternal(QObject *object, int windowId, int dept
 
     const int nodeId = QQmlDebugService::idForObject(object);
     const QString typeName = prettyTypeName(object);
+    const QJsonArray aliases = typeAliases(object, typeName);
     const QString qmlId = qmlIdForObject(object);
     const QString nodeVisualPath = visualPath.isEmpty()
             ? QStringLiteral("/%1[0]").arg(typeName)
@@ -559,6 +590,8 @@ static QJsonObject nodeForObjectInternal(QObject *object, int windowId, int dept
     insertField(&node, options, QStringLiteral("kind"),
                 item ? QStringLiteral("QQuickItem") : QStringLiteral("QObject"));
     insertField(&node, options, QStringLiteral("type"), typeName);
+    if (!aliases.isEmpty())
+        insertField(&node, options, QStringLiteral("typeAliases"), aliases);
     insertField(&node, options, QStringLiteral("objectName"), object->objectName());
     insertField(&node, options, QStringLiteral("visualPath"), nodeVisualPath);
     if (!qmlId.isEmpty())
@@ -595,6 +628,10 @@ static QJsonObject nodeForObjectInternal(QObject *object, int windowId, int dept
                                   QStringLiteral("low"), QStringLiteral("text may be translated")));
     }
     selectors.append(selector(QStringLiteral("type"), typeName, QStringLiteral("medium")));
+    for (const QJsonValue &alias : aliases) {
+        selectors.append(selector(QStringLiteral("type"), alias.toString(), QStringLiteral("medium"),
+                                  QStringLiteral("runtime base type alias")));
+    }
     selectors.append(selector(QStringLiteral("visualPath"), nodeVisualPath, QStringLiteral("low"),
                               QStringLiteral("depends on visual sibling order")));
 
@@ -872,8 +909,16 @@ static bool nodeMatchesSelector(const QJsonObject &node, const QString &kind, co
         return node.value(QStringLiteral("objectName")).toString() == value;
     if (kind == QLatin1String("text"))
         return node.value(QStringLiteral("text")).toString() == value;
-    if (kind == QLatin1String("type"))
-        return node.value(QStringLiteral("type")).toString().contains(value);
+    if (kind == QLatin1String("type")) {
+        if (node.value(QStringLiteral("type")).toString().contains(value))
+            return true;
+        const QJsonArray aliases = node.value(QStringLiteral("typeAliases")).toArray();
+        for (const QJsonValue &alias : aliases) {
+            if (alias.toString().contains(value))
+                return true;
+        }
+        return false;
+    }
     if (kind == QLatin1String("visualPath"))
         return node.value(QStringLiteral("visualPath")).toString() == value;
     if (kind == QLatin1String("sourceLocation"))
@@ -1308,6 +1353,8 @@ QJsonObject QQmlAgentUiTree::query(const QJsonObject &params)
     const QString selectorField = fieldForSelectorKind(kind);
     if (!selectorField.isEmpty())
         matchOptions.fields.insert(selectorField);
+    if (kind == QLatin1String("type"))
+        matchOptions.fields.insert(QStringLiteral("typeAliases"));
 
     TreeBuildOptions resultOptions;
     resultOptions.includeInvisible = true;
@@ -1348,6 +1395,7 @@ QJsonObject QQmlAgentUiTree::query(const QJsonObject &params)
             QStringLiteral("qmlId"),
             QStringLiteral("objectName"),
             QStringLiteral("type"),
+            QStringLiteral("typeAliases"),
             QStringLiteral("text"),
             QStringLiteral("visualPath"),
             QStringLiteral("sourceLocation"),
