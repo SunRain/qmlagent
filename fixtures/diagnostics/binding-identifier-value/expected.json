@@ -15,7 +15,8 @@
     "sourceMethod": "qqmlbinding-source-location",
     "dependency": {
       "property": "baseValue",
-      "value": 41
+      "value": 41,
+      "selector": "id=\"root\""
     }
   }
 }

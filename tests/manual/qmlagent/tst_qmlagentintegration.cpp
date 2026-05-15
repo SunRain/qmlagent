@@ -2797,11 +2797,23 @@ void QmlAgentIntegrationTest::diagnosticsFixturesMatchExpectedIssues()
                 const QJsonArray dependencies = provenance.value(QStringLiteral("dependencies")).toArray();
                 for (const QJsonValue &dependencyValue : dependencies) {
                     const QJsonObject dependency = dependencyValue.toObject();
-                    if (dependency.value(QStringLiteral("property")).toString()
-                                == expectedDependency.value(QStringLiteral("property")).toString()
-                            && dependency.value(QStringLiteral("value"))
-                                == expectedDependency.value(QStringLiteral("value"))) {
+                    const bool propertyMatches = dependency.value(QStringLiteral("property")).toString()
+                            == expectedDependency.value(QStringLiteral("property")).toString();
+                    const bool valueMatches = dependency.value(QStringLiteral("value"))
+                            == expectedDependency.value(QStringLiteral("value"));
+                    const QString expectedSelector =
+                            expectedDependency.value(QStringLiteral("selector")).toString();
+                    const bool selectorMatches = expectedSelector.isEmpty()
+                            || dependency.value(QStringLiteral("selector")).toString() == expectedSelector;
+                    if (propertyMatches && valueMatches && selectorMatches) {
                         foundDependency = true;
+                        if (!expectedSelector.isEmpty()) {
+                            QVERIFY2(!dependency.value(QStringLiteral("nextHints")).toArray().isEmpty(),
+                                     qPrintable(QStringLiteral("%1: dependency selector has no nextHints in %2")
+                                                        .arg(fixtureName,
+                                                             QString::fromUtf8(QJsonDocument(result)
+                                                                               .toJson(QJsonDocument::Compact)))));
+                        }
                         break;
                     }
                 }

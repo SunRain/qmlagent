@@ -502,6 +502,22 @@ static QJsonObject bindableDependencySummary(QPropertyBindingPrivate *binding)
     return summary;
 }
 
+static QString quotedSelectorValue(QString value)
+{
+    value.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
+    value.replace(QLatin1Char('"'), QStringLiteral("\\\""));
+    return QStringLiteral("\"%1\"").arg(value);
+}
+
+static QString dependencySelector(const QString &qmlId, const QString &objectName)
+{
+    if (!qmlId.isEmpty())
+        return QStringLiteral("id=%1").arg(quotedSelectorValue(qmlId));
+    if (!objectName.isEmpty())
+        return QStringLiteral("objectName=%1").arg(quotedSelectorValue(objectName));
+    return {};
+}
+
 static QJsonArray dependencyEvidence(const QQmlBinding *binding)
 {
     QJsonArray dependencies;
@@ -529,6 +545,19 @@ static QJsonArray dependencyEvidence(const QQmlBinding *binding)
             entry.insert(QStringLiteral("type"), QString::fromUtf8(object->metaObject()->className()));
             entry.insert(QStringLiteral("sourceLocation"),
                          QQmlAgentSourceResolver::sourceLocationForObject(object));
+            const QString selector = dependencySelector(id, object->objectName());
+            if (!selector.isEmpty()) {
+                entry.insert(QStringLiteral("selector"), selector);
+                entry.insert(QStringLiteral("nextHints"), QJsonArray{ QJsonObject{
+                    { QStringLiteral("method"), QStringLiteral("UI.query") },
+                    { QStringLiteral("params"), QJsonObject{
+                        { QStringLiteral("selector"), selector },
+                        { QStringLiteral("properties"), QJsonArray{ dependency.name() } },
+                    } },
+                    { QStringLiteral("reason"),
+                      QStringLiteral("Inspect the runtime dependency value that feeds this binding.") },
+                } });
+            }
         }
         dependencies.append(entry);
     }
