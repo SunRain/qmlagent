@@ -2179,6 +2179,24 @@ void QmlAgentIntegrationTest::qtQuickControlsExposeAuthoredIds()
     QVERIFY2(spinAfterProperty.value.toDouble() >= spinBefore,
              "Expected SpinBox Up key to keep or increase value.");
 
+    const PropertyValueResult doubleSpinBeforeProperty =
+            propertyValue(QStringLiteral("controlsDoubleSpinBox"), QStringLiteral("value"));
+    QVERIFY2(doubleSpinBeforeProperty.ok(), qPrintable(doubleSpinBeforeProperty.failure));
+    const double doubleSpinBefore = doubleSpinBeforeProperty.value.toDouble();
+    const auto doubleSpinKeyResponse = invoke(&client, QStringLiteral("Input.dispatchKeyEvent"), {
+        { QStringLiteral("selector"), QStringLiteral("id=\"controlsDoubleSpinBox\"") },
+        { QStringLiteral("keyCode"), 16777235 },
+    }, requestId++, &errorMessage);
+    QVERIFY2(doubleSpinKeyResponse.has_value(), qPrintable(errorMessage));
+    QCOMPARE(doubleSpinKeyResponse->value(QStringLiteral("result")).toObject()
+                     .value(QStringLiteral("delivered")).toBool(),
+             true);
+    const PropertyValueResult doubleSpinAfterProperty =
+            propertyValue(QStringLiteral("controlsDoubleSpinBox"), QStringLiteral("value"));
+    QVERIFY2(doubleSpinAfterProperty.ok(), qPrintable(doubleSpinAfterProperty.failure));
+    QVERIFY2(doubleSpinAfterProperty.value.toDouble() >= doubleSpinBefore,
+             "Expected DoubleSpinBox Up key to keep or increase value.");
+
     const auto sliderBeforeResponse = invoke(&client, QStringLiteral("UI.query"), {
         { QStringLiteral("selector"), QStringLiteral("id=\"controlsSlider\"") },
         { QStringLiteral("includeSource"), false },
