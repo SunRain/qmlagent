@@ -1,6 +1,6 @@
 # MCP Transcript Fixtures
 
-These fixtures are review aids for the `qmlagent --mcp` surface. They are not
+These fixtures are review aids for the `qmlagent-mcp` surface. They are not
 golden runtime captures: node ids, source paths, event ordering, and exact tool
 schemas can vary as the protocol grows.
 

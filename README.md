@@ -120,6 +120,8 @@ Restart the agent session so the MCP server and skill are loaded.
 "$QT_BIN/qmlagentctl" reload-preview
 ```
 
+With MCP, preview sessions reload through `qmlagent.preview_reload`.
+
 Manual launch:
 
 ```
@@ -164,10 +166,10 @@ id="tableCell" row=0 column=1
 
 ```
 inspect:   qmlagent.ui_query / qmlagent.ui_get_tree
-diagnose:  qmlagent.diagnostics_analyze_node / diagnostics_analyze_tree
-source:    qmlagent.source_resolve / Diagnostics.analyzeBinding
-act:       qmlagent.input_click / input_long_press / input_drag / input_wheel / input_clear_text / input_type_text
-wait:      qmlagent.ui_wait_for or qmlagent.workflow_click_and_wait
+diagnose:  qmlagent.diagnostics_analyze_node / qmlagent.diagnostics_analyze_tree
+source:    qmlagent.source_resolve / qmlagent.diagnostics_analyze_binding
+act:       qmlagent.input_click / qmlagent.input_long_press / qmlagent.input_drag / qmlagent.input_wheel / qmlagent.input_clear_text / qmlagent.input_type_text
+wait:      qmlagent.ui_wait_for / qmlagent.workflow_click_and_wait
 verify:    UI / diagnostics / log evidence, not screenshots
 ```
 
@@ -188,7 +190,8 @@ text contains "google"
 text startsWith "https://"
 ```
 
-Use `Diagnostics.analyzeBinding` when geometry or state looks computed.
+Use `qmlagent.diagnostics_analyze_binding` when geometry or state looks
+computed. The raw protocol method is `Diagnostics.analyzeBinding`.
 
 Runtime mutation tools exist only for setup and navigation and are disabled by
 default. Enable them explicitly and verify final behavior through UI, input,
