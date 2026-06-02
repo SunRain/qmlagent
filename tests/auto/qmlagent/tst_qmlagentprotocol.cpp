@@ -214,6 +214,25 @@ void tst_QQmlAgentProtocol::mcpToolSchemasExposeAgentFirstContracts()
     QVERIFY(waitOperators.contains(QStringLiteral("startsWith")));
     QVERIFY(waitOperators.contains(QStringLiteral("endsWith")));
 
+    const QJsonObject inputClick = mcpToolByName(QStringLiteral("qmlagent.input_click"));
+    QVERIFY(!inputClick.isEmpty());
+    QVERIFY2(inputClick.value(QStringLiteral("description")).toString()
+                    .contains(QStringLiteral("input delivery only")),
+             qPrintable(QJsonDocument(inputClick).toJson(QJsonDocument::Compact)));
+    QVERIFY2(inputClick.value(QStringLiteral("description")).toString()
+                    .contains(QStringLiteral("settle.timedOut")),
+             qPrintable(QJsonDocument(inputClick).toJson(QJsonDocument::Compact)));
+    QVERIFY(inputClick.value(QStringLiteral("inputSchema")).toObject()
+                    .value(QStringLiteral("properties")).toObject()
+                    .contains(QStringLiteral("settle")));
+
+    const QJsonObject workflowClickAndWait =
+            mcpToolByName(QStringLiteral("qmlagent.workflow_click_and_wait"));
+    QVERIFY(!workflowClickAndWait.isEmpty());
+    QVERIFY2(workflowClickAndWait.value(QStringLiteral("description")).toString()
+                    .contains(QStringLiteral("Agent-first compressed workflow")),
+             qPrintable(QJsonDocument(workflowClickAndWait).toJson(QJsonDocument::Compact)));
+
     const QJsonObject diagnosticsTree = mcpToolByName(QStringLiteral("qmlagent.diagnostics_analyze_tree"));
     QVERIFY(!diagnosticsTree.isEmpty());
     const QJsonObject diagnosticsProperties = diagnosticsTree.value(QStringLiteral("inputSchema"))

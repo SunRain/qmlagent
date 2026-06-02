@@ -129,6 +129,33 @@ static QJsonObject failureWithDiagnostics(const QString &reason, const QJsonArra
     };
 }
 
+static QJsonArray semanticVerificationHints()
+{
+    return {
+        QJsonObject{
+            { QStringLiteral("method"), QStringLiteral("UI.waitFor") },
+            { QStringLiteral("reason"), QStringLiteral("Wait for the expected semantic UI state after input.") },
+        },
+        QJsonObject{
+            { QStringLiteral("method"), QStringLiteral("UI.query") },
+            { QStringLiteral("reason"), QStringLiteral("Query the changed node/property as final behavior evidence.") },
+        },
+        QJsonObject{
+            { QStringLiteral("method"), QStringLiteral("Diagnostics.analyzeTree") },
+            { QStringLiteral("reason"), QStringLiteral("Check for layout/input issues if input delivery did not produce the expected state.") },
+        },
+    };
+}
+
+static QJsonObject successfulInputResult(QJsonObject result)
+{
+    result.insert(QStringLiteral("ok"), true);
+    result.insert(QStringLiteral("verificationRole"), QStringLiteral("input-delivery-only"));
+    result.insert(QStringLiteral("semanticProof"), false);
+    result.insert(QStringLiteral("nextHints"), semanticVerificationHints());
+    return result;
+}
+
 static QJsonObject inputFailureFromActionability(
         const QJsonArray &reasons, int nodeId,
         QJsonObject (*failureFactory)(const QString &, int, const QJsonArray &))
@@ -469,12 +496,20 @@ static QJsonObject runInputAndSettle(QQuickWindow *window, const QJsonObject &pa
     fn(&elapsed);
 
     if (!guardedWindow) {
+        const QString reason = framesAfterAction == 0
+                ? QStringLiteral("target_window_destroyed_before_frame")
+                : QStringLiteral("target_window_destroyed_after_frame");
         return {
+            { QStringLiteral("ok"), framesAfterAction > 0 },
             { QStringLiteral("strategy"), QStringLiteral("frameSwappedOrTimeout") },
             { QStringLiteral("framesAfterAction"), framesAfterAction },
             { QStringLiteral("elapsedMs"), int(elapsed.elapsed()) },
             { QStringLiteral("timedOut"), framesAfterAction == 0 },
+            { QStringLiteral("reason"), reason },
+            { QStringLiteral("verificationRole"), QStringLiteral("render-loop-settle-only") },
+            { QStringLiteral("semanticProof"), false },
             { QStringLiteral("targetWindowDestroyed"), true },
+            { QStringLiteral("nextHints"), semanticVerificationHints() },
         };
     }
 
@@ -484,11 +519,19 @@ static QJsonObject runInputAndSettle(QQuickWindow *window, const QJsonObject &pa
     timeout.start(settleTimeoutMs);
     settleLoop.exec(QEventLoop::ExcludeUserInputEvents);
 
+    const QString reason = framesAfterAction == 0
+            ? QStringLiteral("frame_not_observed_before_timeout")
+            : QStringLiteral("frame_observed");
     return {
+        { QStringLiteral("ok"), framesAfterAction > 0 },
         { QStringLiteral("strategy"), QStringLiteral("frameSwappedOrTimeout") },
         { QStringLiteral("framesAfterAction"), framesAfterAction },
         { QStringLiteral("elapsedMs"), int(elapsed.elapsed()) },
         { QStringLiteral("timedOut"), framesAfterAction == 0 },
+        { QStringLiteral("reason"), reason },
+        { QStringLiteral("verificationRole"), QStringLiteral("render-loop-settle-only") },
+        { QStringLiteral("semanticProof"), false },
+        { QStringLiteral("nextHints"), framesAfterAction == 0 ? semanticVerificationHints() : QJsonArray() },
     };
 }
 
@@ -794,7 +837,7 @@ QJsonObject QQmlAgentInput::clickNode(const QJsonObject &params)
                                     Qt::LeftButton, Qt::NoButton, Qt::NoModifier, elapsed);
     });
 
-    return {
+    return successfulInputResult({
         { QStringLiteral("delivered"), true },
         { QStringLiteral("node"), ref.node },
         { QStringLiteral("point"), QJsonArray{ center.x(), center.y() } },
@@ -802,7 +845,7 @@ QJsonObject QQmlAgentInput::clickNode(const QJsonObject &params)
         { QStringLiteral("mode"), QQmlAgentInputDriver::mode() },
         { QStringLiteral("settle"), settle },
         { QStringLiteral("postDispatch"), postDispatchTargetState(nodeId, &center) },
-    };
+    });
 }
 
 QJsonObject QQmlAgentInput::longPressNode(const QJsonObject &params)
@@ -881,14 +924,21 @@ QJsonObject QQmlAgentInput::longPressNode(const QJsonObject &params)
                                               Qt::NoButton, modifiers, elapsed);
               })
             : QJsonObject{
+                  { QStringLiteral("ok"), framesDuringHold > 0 },
                   { QStringLiteral("strategy"), QStringLiteral("frameSwappedOrTimeout") },
                   { QStringLiteral("framesAfterAction"), framesDuringHold },
                   { QStringLiteral("elapsedMs"), int(holdElapsed.elapsed()) },
                   { QStringLiteral("timedOut"), framesDuringHold == 0 },
+                  { QStringLiteral("reason"), framesDuringHold == 0
+                            ? QStringLiteral("target_window_destroyed_before_frame")
+                            : QStringLiteral("target_window_destroyed_after_frame") },
+                  { QStringLiteral("verificationRole"), QStringLiteral("render-loop-settle-only") },
+                  { QStringLiteral("semanticProof"), false },
                   { QStringLiteral("targetWindowDestroyed"), true },
+                  { QStringLiteral("nextHints"), semanticVerificationHints() },
               };
 
-    return {
+    return successfulInputResult({
         { QStringLiteral("delivered"), true },
         { QStringLiteral("node"), ref.node },
         { QStringLiteral("point"), pointArray(windowPoint) },
@@ -902,7 +952,7 @@ QJsonObject QQmlAgentInput::longPressNode(const QJsonObject &params)
         { QStringLiteral("mode"), QQmlAgentInputDriver::mode() },
         { QStringLiteral("settle"), settle },
         { QStringLiteral("postDispatch"), postDispatchTargetState(nodeId, &windowPoint) },
-    };
+    });
 }
 
 QJsonObject QQmlAgentInput::dragNode(const QJsonObject &params)
@@ -992,7 +1042,7 @@ QJsonObject QQmlAgentInput::dragNode(const QJsonObject &params)
     });
     const QPointF finalWindowPoint = path.constLast();
 
-    return {
+    return successfulInputResult({
         { QStringLiteral("delivered"), true },
         { QStringLiteral("node"), ref.node },
         { QStringLiteral("button"), params.value(QStringLiteral("button")).toString(QStringLiteral("left")) },
@@ -1006,7 +1056,7 @@ QJsonObject QQmlAgentInput::dragNode(const QJsonObject &params)
         { QStringLiteral("mode"), QQmlAgentInputDriver::mode() },
         { QStringLiteral("settle"), settle },
         { QStringLiteral("postDispatch"), postDispatchTargetState(nodeId, &finalWindowPoint) },
-    };
+    });
 }
 
 QJsonObject QQmlAgentInput::dispatchMouseEvent(const QJsonObject &params)
@@ -1083,7 +1133,7 @@ QJsonObject QQmlAgentInput::dispatchMouseEvent(const QJsonObject &params)
                                     modifiers, elapsed);
     });
 
-    return {
+    return successfulInputResult({
         { QStringLiteral("delivered"), true },
         { QStringLiteral("node"), ref.node },
         { QStringLiteral("type"), typeName },
@@ -1093,7 +1143,7 @@ QJsonObject QQmlAgentInput::dispatchMouseEvent(const QJsonObject &params)
         { QStringLiteral("mode"), QQmlAgentInputDriver::mode() },
         { QStringLiteral("settle"), settle },
         { QStringLiteral("postDispatch"), postDispatchTargetState(nodeId, &windowPoint) },
-    };
+    });
 }
 
 QJsonObject QQmlAgentInput::dispatchTouchEvent(const QJsonObject &params)
@@ -1200,7 +1250,7 @@ QJsonObject QQmlAgentInput::dispatchTouchEvent(const QJsonObject &params)
     });
     const QPointF postPoint = eventPoints.isEmpty() ? QPointF() : eventPoints.constLast().windowPoint;
 
-    return {
+    return successfulInputResult({
         { QStringLiteral("delivered"), true },
         { QStringLiteral("node"), ref.node },
         { QStringLiteral("type"), typeName },
@@ -1211,7 +1261,7 @@ QJsonObject QQmlAgentInput::dispatchTouchEvent(const QJsonObject &params)
         { QStringLiteral("postDispatch"), eventPoints.isEmpty()
                   ? postDispatchTargetState(nodeId)
                   : postDispatchTargetState(nodeId, &postPoint) },
-    };
+    });
 }
 
 QJsonObject QQmlAgentInput::wheel(const QJsonObject &params)
@@ -1272,7 +1322,7 @@ QJsonObject QQmlAgentInput::wheel(const QJsonObject &params)
         ++eventsSent;
     });
 
-    return {
+    return successfulInputResult({
         { QStringLiteral("delivered"), true },
         { QStringLiteral("node"), ref.node },
         { QStringLiteral("point"), QJsonArray{ center.x(), center.y() } },
@@ -1283,7 +1333,7 @@ QJsonObject QQmlAgentInput::wheel(const QJsonObject &params)
         { QStringLiteral("mode"), QQmlAgentInputDriver::mode() },
         { QStringLiteral("settle"), settle },
         { QStringLiteral("postDispatch"), postDispatchTargetState(nodeId, &center) },
-    };
+    });
 }
 
 QJsonObject QQmlAgentInput::typeText(const QJsonObject &params)
@@ -1603,14 +1653,14 @@ QJsonObject QQmlAgentInput::dispatchKeyEvent(const QJsonObject &params)
             QQmlAgentInputDriver::key(guardedKeyTarget.data(), QEvent::KeyRelease, key, modifiers, text);
     });
 
-    QJsonObject result{
+    QJsonObject result = successfulInputResult({
         { QStringLiteral("delivered"), true },
         { QStringLiteral("keyCode"), key },
         { QStringLiteral("text"), text },
         { QStringLiteral("type"), type },
         { QStringLiteral("mode"), QQmlAgentInputDriver::mode() },
         { QStringLiteral("settle"), settle },
-    };
+    });
     if (!focusResult.isEmpty())
         result.insert(QStringLiteral("focus"), focusResult);
     return result;

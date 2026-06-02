@@ -1364,6 +1364,33 @@ static QJsonObject invalidSelectorDiagnostic(const QString &selectorText)
     };
 }
 
+static QJsonArray stableSelectorHints(const QString &kind, int matchCount)
+{
+    QJsonArray hints{
+        QJsonObject{
+            { QStringLiteral("selector"), QStringLiteral("id=\"meaningfulId\"") },
+            { QStringLiteral("reason"), QStringLiteral("Authored QML ids are stable across launches and are preferred for agent-created or repaired components.") },
+        },
+        QJsonObject{
+            { QStringLiteral("selector"), QStringLiteral("objectName=\"feature.meaningfulName\"") },
+            { QStringLiteral("reason"), QStringLiteral("Use a meaningful product/app objectName when an external stable selector is genuinely useful; avoid automation-only test hooks.") },
+        },
+    };
+    if (matchCount > 1) {
+        hints.append(QJsonObject{
+            { QStringLiteral("selector"), QStringLiteral("id=\"delegateRoot\" index=0") },
+            { QStringLiteral("reason"), QStringLiteral("For repeated delegates, prefer id/objectName plus runtime delegate index metadata when available.") },
+        });
+    }
+    if (kind != QLatin1String("type")) {
+        hints.append(QJsonObject{
+            { QStringLiteral("selector"), QStringLiteral("type=\"Button\"") },
+            { QStringLiteral("reason"), QStringLiteral("Type selectors are useful for broad inspection, but often ambiguous for input and verification.") },
+        });
+    }
+    return hints;
+}
+
 QJsonObject QQmlAgentUiTree::query(const QJsonObject &params)
 {
     SelectorCriteria criteria;
@@ -1457,6 +1484,7 @@ QJsonObject QQmlAgentUiTree::query(const QJsonObject &params)
             { QStringLiteral("message"), QStringLiteral("Selector matched multiple nodes.") },
             { QStringLiteral("selector"), selectorText },
             { QStringLiteral("matchCount"), matches.size() },
+            { QStringLiteral("stableSelectorHints"), stableSelectorHints(kind, matches.size()) },
         };
         const QJsonArray indexedSuggestions = globallyUniqueIndexedSelectorSuggestions(
                 indexedSelectorSuggestions(matches, kind, value), matchOptions, resultOptions);

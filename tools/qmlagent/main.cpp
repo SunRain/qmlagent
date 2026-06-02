@@ -1732,6 +1732,8 @@ private:
         if (name == QLatin1String("qmlagent.input_click")) {
             *targetMethod = QStringLiteral("Input.clickNode");
             *targetParams = nodeRef(arguments, error);
+            if (arguments.contains(QStringLiteral("settle")))
+                targetParams->insert(QStringLiteral("settle"), arguments.value(QStringLiteral("settle")));
             return error->isEmpty();
         }
         if (name == QLatin1String("qmlagent.input_long_press")) {
@@ -2246,6 +2248,9 @@ private:
     QJsonObject agentToolGuide() const
     {
         return {
+            { QStringLiteral("advertisedTools"), advertisedToolNames() },
+            { QStringLiteral("discoverabilityContract"),
+              QStringLiteral("Every qmlagent.* tool named in this guide should appear in advertisedTools. If a lazy agent runtime has not exposed one yet, search by the exact tool name from advertisedTools.") },
             { QStringLiteral("inspect"), QStringLiteral("qmlagent.ui_query") },
             { QStringLiteral("tree"), QStringLiteral("qmlagent.ui_get_tree") },
             { QStringLiteral("click"), QStringLiteral("qmlagent.input_click") },
@@ -2287,6 +2292,18 @@ private:
                   QStringLiteral("Use qmlagent.render_capture_screenshot only after structured runtime evidence is insufficient; default output omits PNG data. If includeData:true is necessary, pass scale and/or region.") },
             } },
         };
+    }
+
+    static QJsonArray advertisedToolNames()
+    {
+        QJsonArray names;
+        const QJsonArray tools = toolList();
+        for (const QJsonValue &toolValue : tools) {
+            const QString name = toolValue.toObject().value(QStringLiteral("name")).toString();
+            if (!name.isEmpty())
+                names.append(name);
+        }
+        return names;
     }
 
     QJsonObject targetStatus() const

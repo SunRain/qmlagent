@@ -105,9 +105,18 @@ QJsonObject summarizedWorkflowReport(const QJsonObject &report)
     if (inputResult.contains(QStringLiteral("result")))
         inputResult = inputResult.value(QStringLiteral("result")).toObject();
     QJsonObject input{
+        { QStringLiteral("ok"), inputResult.value(QStringLiteral("ok")).toBool() },
         { QStringLiteral("delivered"), inputResult.value(QStringLiteral("delivered")).toBool() },
         { QStringLiteral("reason"), inputResult.value(QStringLiteral("reason")).toString() },
     };
+    for (const QString &field : {
+             QStringLiteral("verificationRole"),
+             QStringLiteral("semanticProof"),
+             QStringLiteral("nextHints"),
+         }) {
+        if (inputResult.contains(field))
+            input.insert(field, inputResult.value(field));
+    }
     if (inputResult.contains(QStringLiteral("settle")))
         input.insert(QStringLiteral("settle"), inputResult.value(QStringLiteral("settle")));
     if (inputResult.contains(QStringLiteral("diagnostics")))

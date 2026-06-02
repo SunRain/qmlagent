@@ -961,6 +961,14 @@ void QmlAgentIntegrationTest::clickNodeDeliversSyntheticInput()
     QCOMPARE(indexedSelectors.size(), 2);
     QCOMPARE(indexedSelectors.at(1).toObject().value(QStringLiteral("selector")).toString(),
              QStringLiteral("id=\"indexedDelegateTap\" index=1"));
+    const QJsonArray stableSelectorHints = delegateQueryResponse->value(QStringLiteral("result"))
+            .toObject().value(QStringLiteral("diagnostics")).toArray()
+            .at(0).toObject().value(QStringLiteral("stableSelectorHints")).toArray();
+    QVERIFY2(!stableSelectorHints.isEmpty(), qPrintable(errorMessage));
+    QVERIFY2(stableSelectorHints.at(0).toObject().value(QStringLiteral("reason")).toString()
+                     .contains(QStringLiteral("Authored QML ids")),
+             qPrintable(QString::fromUtf8(QJsonDocument(stableSelectorHints)
+                                                  .toJson(QJsonDocument::Compact))));
 
     const auto ambiguousTextDelegateResponse = invoke(&client, QStringLiteral("UI.query"), {
         { QStringLiteral("selector"), QStringLiteral("text=\"Delta\"") },
@@ -4528,6 +4536,20 @@ void QmlAgentIntegrationTest::referenceClientMcpPersistentMode()
                      .value(QStringLiteral("structuredContent")).toObject()
                      .value(QStringLiteral("delivered")).toBool(),
              true);
+    const QJsonObject inputClickContent = responses.value(12).value(QStringLiteral("result"))
+            .toObject().value(QStringLiteral("structuredContent")).toObject();
+    QCOMPARE(inputClickContent.value(QStringLiteral("ok")).toBool(), true);
+    QCOMPARE(inputClickContent.value(QStringLiteral("verificationRole")).toString(),
+             QStringLiteral("input-delivery-only"));
+    QCOMPARE(inputClickContent.value(QStringLiteral("semanticProof")).toBool(true), false);
+    QVERIFY(inputClickContent.value(QStringLiteral("settle")).toObject()
+                    .contains(QStringLiteral("ok")));
+    QCOMPARE(inputClickContent.value(QStringLiteral("settle")).toObject()
+                     .value(QStringLiteral("verificationRole")).toString(),
+             QStringLiteral("render-loop-settle-only"));
+    QCOMPARE(inputClickContent.value(QStringLiteral("settle")).toObject()
+                     .value(QStringLiteral("semanticProof")).toBool(true),
+             false);
     QCOMPARE(responses.value(16).value(QStringLiteral("result")).toObject()
                      .value(QStringLiteral("structuredContent")).toObject()
                      .value(QStringLiteral("delivered")).toBool(),

@@ -230,8 +230,13 @@ QJsonArray toolList()
                  } },
              })),
         tool(QStringLiteral("qmlagent.input_click"),
-             QStringLiteral("Click one node through Qt synthetic input. Completion includes QmlAgent settle metadata. For transitions, Drawer/Menu/Popup/Dialog open-close, loaders, or async state, prefer qmlagent.workflow_click_and_wait; if that tool is not visible in lazy native-tool discovery, call qmlagent.input_click then qmlagent.ui_wait_for."),
-             schema(withNodeRef({}))),
+             QStringLiteral("Click one node through Qt synthetic input. A delivered click returns ok:true for input delivery only; settle.timedOut means no frame was observed before the settle timeout and is not semantic proof of failure. For transitions, Drawer/Menu/Popup/Dialog open-close, loaders, or async state, prefer qmlagent.workflow_click_and_wait; if that tool is not visible in lazy native-tool discovery, call qmlagent.input_click then qmlagent.ui_wait_for."),
+             schema(withNodeRef({
+                 { QStringLiteral("settle"), QJsonObject{
+                     { QStringLiteral("type"), QStringLiteral("object") },
+                     { QStringLiteral("description"), QStringLiteral("Optional settle tuning such as timeoutMs. This affects frame-settle evidence only, not semantic verification.") },
+                 } },
+             }))),
         tool(QStringLiteral("qmlagent.input_long_press"),
              QStringLiteral("Long-press one node through Qt synthetic mouse input as one atomic action: press, hold, release cleanup, then settle. Use for MouseArea.onPressAndHold, context actions, press-and-hold affordances, and mobile-style UI. Prefer this over manual qmlagent.input_mouse press/wait/release sequences so agents do not leave a held button after interruption. Verify post-action state with qmlagent.ui_wait_for or use qmlagent.workflow_long_press_and_wait."),
              schema(withNodeRef({
