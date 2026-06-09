@@ -673,6 +673,12 @@ static int addLauncherReplySlack(int semanticTimeoutMs)
     return boundedSemanticTimeout + LauncherControlReplySlackMs;
 }
 
+static int boundedTargetSettleMs(const QJsonObject &targetParams, const QString &settleKey)
+{
+    const QJsonObject settle = targetParams.value(settleKey).toObject();
+    return qBound(0, settle.value(QStringLiteral("timeoutMs")).toInt(50), 30000);
+}
+
 static int launcherControlTimeoutMs(const QString &method, const QJsonObject &params,
                                     int fallbackTimeoutMs)
 {
@@ -680,12 +686,30 @@ static int launcherControlTimeoutMs(const QString &method, const QJsonObject &pa
         return fallbackTimeoutMs;
 
     const QString targetMethod = params.value(QStringLiteral("method")).toString();
-    if (targetMethod != QLatin1String("UI.waitFor"))
-        return fallbackTimeoutMs;
-
     const QJsonObject targetParams = params.value(QStringLiteral("params")).toObject();
-    const int semanticTimeoutMs = qMax(0, targetParams.value(QStringLiteral("timeoutMs"))
-                                               .toInt(fallbackTimeoutMs));
+
+    // Mirror the per-request GUI dispatch budgets the QmlAgent service grants
+    // long-running requests so the gateway does not time out one layer below
+    // a request that is still legitimately running on the target GUI thread.
+    int semanticTimeoutMs = -1;
+    if (targetMethod == QLatin1String("UI.waitFor")) {
+        semanticTimeoutMs = qMax(0, targetParams.contains(QStringLiteral("timeoutMs"))
+                ? targetParams.value(QStringLiteral("timeoutMs")).toInt(fallbackTimeoutMs)
+                : targetParams.value(QStringLiteral("until")).toObject()
+                        .value(QStringLiteral("timeoutMs")).toInt(fallbackTimeoutMs));
+    } else if (targetMethod == QLatin1String("Input.longPressNode")) {
+        semanticTimeoutMs = qBound(1, targetParams.value(QStringLiteral("holdMs")).toInt(900), 10000)
+                + boundedTargetSettleMs(targetParams, QStringLiteral("settle"));
+    } else if (targetMethod.startsWith(QLatin1String("Input."))
+               || targetMethod.startsWith(QLatin1String("Runtime."))) {
+        int settleBudgetMs = boundedTargetSettleMs(targetParams, QStringLiteral("settle"));
+        if (targetMethod == QLatin1String("Input.typeText"))
+            settleBudgetMs += boundedTargetSettleMs(targetParams, QStringLiteral("focusSettle"));
+        semanticTimeoutMs = settleBudgetMs;
+    }
+
+    if (semanticTimeoutMs < 0)
+        return fallbackTimeoutMs;
     return qMax(fallbackTimeoutMs, addLauncherReplySlack(semanticTimeoutMs));
 }
 

@@ -1534,6 +1534,15 @@ struct WaitEvaluation
 static constexpr int DefaultWaitTimeoutMs = 1000;
 static constexpr int MaxWaitTimeoutMs = 30000;
 
+static int boundedWaitTimeoutMs(const QJsonObject &params)
+{
+    const int requestedTimeoutMs = params.contains(QStringLiteral("timeoutMs"))
+            ? params.value(QStringLiteral("timeoutMs")).toInt(DefaultWaitTimeoutMs)
+            : params.value(QStringLiteral("until")).toObject()
+                    .value(QStringLiteral("timeoutMs")).toInt(DefaultWaitTimeoutMs);
+    return qBound(0, requestedTimeoutMs, MaxWaitTimeoutMs);
+}
+
 static QJsonObject waitDiagnostic(const QString &id, const QString &message)
 {
     return {
@@ -1701,15 +1710,41 @@ static WaitEvaluation evaluateWaitCondition(const WaitCondition &condition)
         { QStringLiteral("includeSource"), true },
         { QStringLiteral("maxNodes"), 20 },
     };
-    if (!condition.property.isEmpty())
+    if (!condition.property.isEmpty()) {
         queryParams.insert(QStringLiteral("properties"), QJsonArray{ condition.property });
+        // Property predicates must observe nodes that left the visible set,
+        // for example until {property:"visible", op:"=", value:false}.
+        queryParams.insert(QStringLiteral("includeInvisible"), true);
+    }
 
     const QJsonObject queryResult = QQmlAgentUiTree::query(queryParams);
-    const QJsonArray matches = queryResult.value(QStringLiteral("matches")).toArray();
+    QJsonArray matches = queryResult.value(QStringLiteral("matches")).toArray();
+    QJsonArray diagnostics = queryResult.value(QStringLiteral("diagnostics")).toArray();
+
+    if (!condition.property.isEmpty() && matches.size() > 1) {
+        // includeInvisible widens the match set; when exactly one match is
+        // visible, that match preserves the visible-only selector semantics.
+        QJsonArray visibleMatches;
+        for (const QJsonValue &match : std::as_const(matches)) {
+            if (match.toObject().value(QStringLiteral("visible")).toBool(false))
+                visibleMatches.append(match);
+        }
+        if (visibleMatches.size() == 1) {
+            matches = visibleMatches;
+            QJsonArray filteredDiagnostics;
+            for (const QJsonValue &diagnostic : std::as_const(diagnostics)) {
+                if (diagnostic.toObject().value(QStringLiteral("id")).toString()
+                        != QLatin1String("selector.ambiguous")) {
+                    filteredDiagnostics.append(diagnostic);
+                }
+            }
+            diagnostics = filteredDiagnostics;
+        }
+    }
 
     WaitEvaluation evaluation;
     evaluation.matchCount = matches.size();
-    evaluation.diagnostics = queryResult.value(QStringLiteral("diagnostics")).toArray();
+    evaluation.diagnostics = diagnostics;
 
     if (condition.property.isEmpty()) {
         evaluation.satisfied = condition.state == QLatin1String("found")
@@ -1827,11 +1862,7 @@ QJsonObject QQmlAgentUiTree::waitFor(const QJsonObject &params)
         };
     }
 
-    const int requestedTimeoutMs = params.contains(QStringLiteral("timeoutMs"))
-            ? params.value(QStringLiteral("timeoutMs")).toInt(DefaultWaitTimeoutMs)
-            : params.value(QStringLiteral("until")).toObject()
-                    .value(QStringLiteral("timeoutMs")).toInt(DefaultWaitTimeoutMs);
-    const int timeoutMs = qBound(0, requestedTimeoutMs, MaxWaitTimeoutMs);
+    const int timeoutMs = boundedWaitTimeoutMs(params);
 
     QElapsedTimer elapsed;
     elapsed.start();
@@ -1874,7 +1905,7 @@ QJsonObject QQmlAgentUiTree::waitFor(const QJsonObject &params)
     if (!evaluation.node.isEmpty())
         result.insert(QStringLiteral("node"), evaluation.node);
     if (!evaluation.satisfied) {
-        result.insert(QStringLiteral("nextHints"), QJsonArray{
+        QJsonArray nextHints{
             QJsonObject{
                 { QStringLiteral("method"), QStringLiteral("UI.query") },
                 { QStringLiteral("params"), QJsonObject{
@@ -1893,9 +1924,28 @@ QJsonObject QQmlAgentUiTree::waitFor(const QJsonObject &params)
                 } },
                 { QStringLiteral("reason"), QStringLiteral("Check whether the target is blocked, invisible, disabled, or offscreen.") },
             },
-        });
+        };
+        if (condition.property == QLatin1String("visible")
+                && evaluation.reason == QLatin1String("target_not_found")) {
+            nextHints.prepend(QJsonObject{
+                { QStringLiteral("method"), QStringLiteral("UI.waitFor") },
+                { QStringLiteral("params"), QJsonObject{
+                    { QStringLiteral("selector"), condition.selector },
+                    { QStringLiteral("until"), QJsonObject{
+                        { QStringLiteral("state"), QStringLiteral("notFound") },
+                    } },
+                } },
+                { QStringLiteral("reason"), QStringLiteral("The target left the tree entirely; wait for state notFound instead of a visible=false property predicate.") },
+            });
+        }
+        result.insert(QStringLiteral("nextHints"), nextHints);
     }
     return result;
+}
+
+int QQmlAgentUiTree::waitForBudgetMs(const QJsonObject &params)
+{
+    return boundedWaitTimeoutMs(params);
 }
 
 QJsonObject QQmlAgentUiTree::describeNode(const QJsonObject &params)

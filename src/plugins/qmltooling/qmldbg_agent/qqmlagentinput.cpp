@@ -27,6 +27,29 @@
 QT_BEGIN_NAMESPACE
 
 static constexpr int DefaultSettleTimeoutMs = 50;
+static constexpr int MaxSettleTimeoutMs = 30000;
+static constexpr int DefaultLongPressHoldMs = 900;
+static constexpr int MaxLongPressHoldMs = 10000;
+
+static int boundedSettleTimeoutMs(const QJsonObject &params,
+                                  const QString &settleKey = QStringLiteral("settle"))
+{
+    const QJsonObject settle = params.value(settleKey).toObject();
+    return qBound(0, settle.value(QStringLiteral("timeoutMs")).toInt(DefaultSettleTimeoutMs),
+                  MaxSettleTimeoutMs);
+}
+
+int QQmlAgentInput::dispatchBudgetMs(const QString &method, const QJsonObject &params)
+{
+    int budgetMs = boundedSettleTimeoutMs(params);
+    if (method == QLatin1String("Input.longPressNode")) {
+        budgetMs += qBound(1, params.value(QStringLiteral("holdMs")).toInt(DefaultLongPressHoldMs),
+                           MaxLongPressHoldMs);
+    }
+    if (method == QLatin1String("Input.typeText"))
+        budgetMs += boundedSettleTimeoutMs(params, QStringLiteral("focusSettle"));
+    return budgetMs;
+}
 
 static QRectF itemBoxInWindow(const QQuickItem *item)
 {
@@ -484,8 +507,7 @@ static QJsonObject runInputAndSettle(QQuickWindow *window, const QJsonObject &pa
     elapsed.start();
     QEventLoop settleLoop;
     QPointer<QQuickWindow> guardedWindow(window);
-    const QJsonObject settle = params.value(QStringLiteral("settle")).toObject();
-    const int settleTimeoutMs = settle.value(QStringLiteral("timeoutMs")).toInt(DefaultSettleTimeoutMs);
+    const int settleTimeoutMs = boundedSettleTimeoutMs(params);
 
     QObject::connect(window, &QQuickWindow::frameSwapped, &settleLoop, [&]() {
         ++framesAfterAction;
@@ -850,8 +872,8 @@ QJsonObject QQmlAgentInput::clickNode(const QJsonObject &params)
 
 QJsonObject QQmlAgentInput::longPressNode(const QJsonObject &params)
 {
-    const int holdMs = params.value(QStringLiteral("holdMs")).toInt(900);
-    if (holdMs < 1 || holdMs > 10000)
+    const int holdMs = params.value(QStringLiteral("holdMs")).toInt(DefaultLongPressHoldMs);
+    if (holdMs < 1 || holdMs > MaxLongPressHoldMs)
         return longPressFailure(QStringLiteral("invalid_duration"), -1,
                                 { QStringLiteral("holdMs=%1").arg(holdMs) });
 

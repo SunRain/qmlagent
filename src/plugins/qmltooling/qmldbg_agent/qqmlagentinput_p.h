@@ -5,12 +5,14 @@
 #define QQMLAGENTINPUT_P_H
 
 #include <QtCore/qjsonobject.h>
+#include <QtCore/qstring.h>
 
 QT_BEGIN_NAMESPACE
 
 class QQmlAgentInput
 {
 public:
+    static int dispatchBudgetMs(const QString &method, const QJsonObject &params);
     static QJsonObject clickNode(const QJsonObject &params);
     static QJsonObject longPressNode(const QJsonObject &params);
     static QJsonObject wheel(const QJsonObject &params);

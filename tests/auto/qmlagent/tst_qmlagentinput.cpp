@@ -4,6 +4,8 @@
 #include "qqmlagentinput_p.h"
 #include "qqmlagentdiagnostics_p.h"
 #include "qqmlagentlogcollector_p.h"
+#include "qqmlagentruntime_p.h"
+#include "qqmlagentuitree_p.h"
 
 #include <private/qqmldebugservice_p.h>
 
@@ -12,6 +14,7 @@
 #include <QtCore/qjsonobject.h>
 #include <QtCore/qlogging.h>
 #include <QtCore/qobject.h>
+#include <QtCore/qtimer.h>
 #include <QtQuick/qquickitem.h>
 #include <QtQuick/qquickwindow.h>
 #include <QtTest/qtest.h>
@@ -32,6 +35,9 @@ private slots:
     void typeTextRejectsEmptyText();
     void wheelRejectsMissingDelta();
     void diagnosticsPromoteOnlyRepairRelevantLogs();
+    void waitForObservesInvisibleProperty();
+    void waitForPrefersUniqueVisibleMatch();
+    void dispatchBudgetsCoverLongRunningRequests();
 };
 
 static QJsonObject clickNode(int nodeId)
@@ -220,6 +226,96 @@ void tst_QQmlAgentInput::diagnosticsPromoteOnlyRepairRelevantLogs()
     QCOMPARE(summary.value(QStringLiteral("promotedLogIssueCount")).toInt(), 1);
     QCOMPARE(summary.value(QStringLiteral("ignoredLogEntryCount")).toInt(), 1);
     QCOMPARE(summary.value(QStringLiteral("issueCount")).toInt(), issues.size());
+}
+
+void tst_QQmlAgentInput::waitForObservesInvisibleProperty()
+{
+    QQuickWindow window;
+    window.resize(200, 200);
+    QQuickItem item;
+    item.setParentItem(window.contentItem());
+    item.setObjectName(QStringLiteral("waitInvisibleTarget"));
+    item.setWidth(20);
+    item.setHeight(20);
+    item.setVisible(true);
+
+    QTimer::singleShot(100, &item, [&item]() { item.setVisible(false); });
+
+    const QJsonObject result = QQmlAgentUiTree::waitFor({
+        { QStringLiteral("selector"), QStringLiteral("objectName=\"waitInvisibleTarget\"") },
+        { QStringLiteral("until"), QJsonObject{
+            { QStringLiteral("property"), QStringLiteral("visible") },
+            { QStringLiteral("op"), QStringLiteral("=") },
+            { QStringLiteral("value"), false },
+        } },
+        { QStringLiteral("timeoutMs"), 3000 },
+    });
+
+    QVERIFY2(result.value(QStringLiteral("ok")).toBool(false),
+             qPrintable(QString::fromUtf8(QJsonDocument(result).toJson(QJsonDocument::Compact))));
+    QCOMPARE(result.value(QStringLiteral("reason")).toString(),
+             QStringLiteral("predicate_satisfied"));
+    QCOMPARE(result.value(QStringLiteral("actual")).toBool(true), false);
+}
+
+void tst_QQmlAgentInput::waitForPrefersUniqueVisibleMatch()
+{
+    QQuickWindow window;
+    window.resize(200, 200);
+
+    QQuickItem visibleItem;
+    visibleItem.setParentItem(window.contentItem());
+    visibleItem.setObjectName(QStringLiteral("waitDuplicateTarget"));
+    visibleItem.setWidth(40);
+    visibleItem.setHeight(20);
+    visibleItem.setVisible(true);
+
+    QQuickItem invisibleItem;
+    invisibleItem.setParentItem(window.contentItem());
+    invisibleItem.setObjectName(QStringLiteral("waitDuplicateTarget"));
+    invisibleItem.setWidth(1);
+    invisibleItem.setHeight(1);
+    invisibleItem.setVisible(false);
+
+    const QJsonObject result = QQmlAgentUiTree::waitFor({
+        { QStringLiteral("selector"), QStringLiteral("objectName=\"waitDuplicateTarget\"") },
+        { QStringLiteral("until"), QJsonObject{
+            { QStringLiteral("property"), QStringLiteral("width") },
+            { QStringLiteral("op"), QStringLiteral(">") },
+            { QStringLiteral("value"), 10 },
+        } },
+        { QStringLiteral("timeoutMs"), 500 },
+    });
+
+    QVERIFY2(result.value(QStringLiteral("ok")).toBool(false),
+             qPrintable(QString::fromUtf8(QJsonDocument(result).toJson(QJsonDocument::Compact))));
+    QCOMPARE(result.value(QStringLiteral("reason")).toString(),
+             QStringLiteral("predicate_satisfied"));
+}
+
+void tst_QQmlAgentInput::dispatchBudgetsCoverLongRunningRequests()
+{
+    // UI.waitFor budget follows the requested timeout, top-level or in until.
+    QCOMPARE(QQmlAgentUiTree::waitForBudgetMs({ { QStringLiteral("timeoutMs"), 20000 } }), 20000);
+    QCOMPARE(QQmlAgentUiTree::waitForBudgetMs({
+        { QStringLiteral("until"), QJsonObject{ { QStringLiteral("timeoutMs"), 8000 } } },
+    }), 8000);
+    QCOMPARE(QQmlAgentUiTree::waitForBudgetMs({ { QStringLiteral("timeoutMs"), 90000 } }), 30000);
+
+    // Long press budget covers hold plus settle.
+    QVERIFY(QQmlAgentInput::dispatchBudgetMs(QStringLiteral("Input.longPressNode"),
+                                             { { QStringLiteral("holdMs"), 8000 } }) >= 8000);
+
+    // Settle budgets are honored and clamped.
+    const QJsonObject longSettle{
+        { QStringLiteral("settle"), QJsonObject{ { QStringLiteral("timeoutMs"), 12000 } } },
+    };
+    QVERIFY(QQmlAgentInput::dispatchBudgetMs(QStringLiteral("Input.clickNode"), longSettle) >= 12000);
+    QVERIFY(QQmlAgentRuntime::dispatchBudgetMs(longSettle) >= 12000);
+    const QJsonObject hugeSettle{
+        { QStringLiteral("settle"), QJsonObject{ { QStringLiteral("timeoutMs"), 600000 } } },
+    };
+    QVERIFY(QQmlAgentInput::dispatchBudgetMs(QStringLiteral("Input.clickNode"), hugeSettle) <= 60000);
 }
 
 QTEST_MAIN(tst_QQmlAgentInput)

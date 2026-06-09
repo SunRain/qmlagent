@@ -11,6 +11,7 @@ QT_BEGIN_NAMESPACE
 class QQmlAgentRuntime
 {
 public:
+    static int dispatchBudgetMs(const QJsonObject &params);
     static QJsonObject setProperty(const QJsonObject &params);
     static QJsonObject invokeMethod(const QJsonObject &params);
 };

@@ -24,6 +24,14 @@ QT_BEGIN_NAMESPACE
 namespace {
 
 constexpr int DefaultSettleTimeoutMs = 50;
+constexpr int MaxSettleTimeoutMs = 30000;
+
+int boundedSettleTimeoutMs(const QJsonObject &params)
+{
+    const QJsonObject settle = params.value(QStringLiteral("settle")).toObject();
+    return qBound(0, settle.value(QStringLiteral("timeoutMs")).toInt(DefaultSettleTimeoutMs),
+                  MaxSettleTimeoutMs);
+}
 
 QJsonObject runtimeDiagnostic(const QString &id, const QString &message)
 {
@@ -95,8 +103,7 @@ QJsonObject runAndSettle(QObject *object, const QJsonObject &params, Fn &&fn)
 
     fn();
 
-    const QJsonObject settle = params.value(QStringLiteral("settle")).toObject();
-    const int settleTimeoutMs = settle.value(QStringLiteral("timeoutMs")).toInt(DefaultSettleTimeoutMs);
+    const int settleTimeoutMs = boundedSettleTimeoutMs(params);
     QTimer timeout;
     timeout.setSingleShot(true);
     QObject::connect(&timeout, &QTimer::timeout, &settleLoop, &QEventLoop::quit);
@@ -230,6 +237,11 @@ QList<QMetaMethod> matchingRuntimeMethods(QObject *object, const QString &method
 }
 
 } // namespace
+
+int QQmlAgentRuntime::dispatchBudgetMs(const QJsonObject &params)
+{
+    return boundedSettleTimeoutMs(params);
+}
 
 QJsonObject QQmlAgentRuntime::setProperty(const QJsonObject &params)
 {

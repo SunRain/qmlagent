@@ -33,7 +33,25 @@
 QT_BEGIN_NAMESPACE
 
 static constexpr int GuiThreadDispatchTimeoutMs = 5000;
+static constexpr int MaxGuiDispatchExtraBudgetMs = 120000;
 static constexpr int MaxUiWatcherDepth = 256;
+
+// Long-running requests (UI.waitFor timeouts, Input.longPressNode holds,
+// settle windows) legitimately occupy the GUI thread beyond the base dispatch
+// timeout. Extend the dispatch deadline by the budget each implementation
+// derives from its own request parameters so the debug thread does not report
+// a false session.gui_thread_timeout while the request is still running.
+static int guiDispatchTimeoutMsFor(const QString &method, const QJsonObject &params)
+{
+    int extraBudgetMs = 0;
+    if (method == QLatin1String("UI.waitFor"))
+        extraBudgetMs = QQmlAgentUiTree::waitForBudgetMs(params);
+    else if (method.startsWith(QLatin1String("Input.")))
+        extraBudgetMs = QQmlAgentInput::dispatchBudgetMs(method, params);
+    else if (method.startsWith(QLatin1String("Runtime.")))
+        extraBudgetMs = QQmlAgentRuntime::dispatchBudgetMs(params);
+    return GuiThreadDispatchTimeoutMs + qBound(0, extraBudgetMs, MaxGuiDispatchExtraBudgetMs);
+}
 
 static const QStringList &agentMethods()
 {
@@ -104,7 +122,7 @@ static QByteArray boundedResponse(const QJsonValue &id, const QString &method,
             });
 }
 
-static QJsonObject guiThreadTimeoutResult()
+static QJsonObject guiThreadTimeoutResult(int timeoutMs)
 {
     return {
         { QStringLiteral("ok"), false },
@@ -115,7 +133,7 @@ static QJsonObject guiThreadTimeoutResult()
             { QStringLiteral("confidence"), 1.0 },
             { QStringLiteral("message"),
               QStringLiteral("Timed out waiting for the GUI thread to run a QmlAgent request.") },
-            { QStringLiteral("timeoutMs"), GuiThreadDispatchTimeoutMs },
+            { QStringLiteral("timeoutMs"), timeoutMs },
             { QStringLiteral("hints"), QJsonArray{
                 QStringLiteral("The target GUI thread may be blocked in modal work, long JavaScript, rendering, or native code."),
                 QStringLiteral("Check Log.getEntries and target process state; relaunch the target if it is unresponsive."),
@@ -139,7 +157,7 @@ static QJsonObject serviceDestroyedResult()
 }
 
 template <typename Fn>
-static QJsonObject runOnGuiThreadBlocking(Fn &&fn)
+static QJsonObject runOnGuiThreadBlocking(Fn &&fn, int timeoutMs = GuiThreadDispatchTimeoutMs)
 {
     QObject *application = QCoreApplication::instance();
     if (!application || QThread::currentThread() == application->thread())
@@ -163,15 +181,15 @@ static QJsonObject runOnGuiThreadBlocking(Fn &&fn)
             state->result = fn();
             state->done.release();
         }, Qt::QueuedConnection)) {
-        QJsonObject result = guiThreadTimeoutResult();
+        QJsonObject result = guiThreadTimeoutResult(timeoutMs);
         result.insert(QStringLiteral("queued"), false);
         return result;
     }
 
-    if (!state->done.tryAcquire(1, GuiThreadDispatchTimeoutMs)) {
+    if (!state->done.tryAcquire(1, timeoutMs)) {
         const bool alreadyStarted = state->started.load(std::memory_order_acquire);
         state->cancelled.store(true, std::memory_order_release);
-        QJsonObject result = guiThreadTimeoutResult();
+        QJsonObject result = guiThreadTimeoutResult(timeoutMs);
         result.insert(QStringLiteral("queued"), true);
         result.insert(QStringLiteral("cancelledIfNotStarted"), true);
         result.insert(QStringLiteral("alreadyStarted"), alreadyStarted);
@@ -273,6 +291,7 @@ void QQmlAgentService::sendEntryEvent(const QJsonObject &entry)
 QJsonObject QQmlAgentService::dispatch(const QString &method, const QJsonObject &params)
 {
     const QPointer<QQmlAgentService> self(this);
+    const int dispatchTimeoutMs = guiDispatchTimeoutMsFor(method, params);
 
     if (method == QLatin1String("Session.getInfo"))
         return sessionInfo();
@@ -301,7 +320,8 @@ QJsonObject QQmlAgentService::dispatch(const QString &method, const QJsonObject 
     if (method == QLatin1String("UI.query"))
         return runOnGuiThreadBlocking([params]() { return QQmlAgentUiTree::query(params); });
     if (method == QLatin1String("UI.waitFor"))
-        return runOnGuiThreadBlocking([params]() { return QQmlAgentUiTree::waitFor(params); });
+        return runOnGuiThreadBlocking([params]() { return QQmlAgentUiTree::waitFor(params); },
+                                       dispatchTimeoutMs);
     if (method == QLatin1String("UI.describeNode"))
         return runOnGuiThreadBlocking([params]() { return QQmlAgentUiTree::describeNode(params); });
     if (method == QLatin1String("UI.getBoxModel"))
@@ -325,34 +345,45 @@ QJsonObject QQmlAgentService::dispatch(const QString &method, const QJsonObject 
         });
     }
     if (method == QLatin1String("Input.clickNode"))
-        return runOnGuiThreadBlocking([params]() { return QQmlAgentInput::clickNode(params); });
+        return runOnGuiThreadBlocking([params]() { return QQmlAgentInput::clickNode(params); },
+                                       dispatchTimeoutMs);
     if (method == QLatin1String("Input.longPressNode"))
-        return runOnGuiThreadBlocking([params]() { return QQmlAgentInput::longPressNode(params); });
+        return runOnGuiThreadBlocking([params]() { return QQmlAgentInput::longPressNode(params); },
+                                       dispatchTimeoutMs);
     if (method == QLatin1String("Input.wheel"))
-        return runOnGuiThreadBlocking([params]() { return QQmlAgentInput::wheel(params); });
+        return runOnGuiThreadBlocking([params]() { return QQmlAgentInput::wheel(params); },
+                                       dispatchTimeoutMs);
     if (method == QLatin1String("Input.focusNode"))
-        return runOnGuiThreadBlocking([params]() { return QQmlAgentInput::focusNode(params); });
+        return runOnGuiThreadBlocking([params]() { return QQmlAgentInput::focusNode(params); },
+                                       dispatchTimeoutMs);
     if (method == QLatin1String("Input.dispatchMouseEvent"))
-        return runOnGuiThreadBlocking([params]() { return QQmlAgentInput::dispatchMouseEvent(params); });
+        return runOnGuiThreadBlocking([params]() { return QQmlAgentInput::dispatchMouseEvent(params); },
+                                       dispatchTimeoutMs);
     if (method == QLatin1String("Input.dragNode"))
-        return runOnGuiThreadBlocking([params]() { return QQmlAgentInput::dragNode(params); });
+        return runOnGuiThreadBlocking([params]() { return QQmlAgentInput::dragNode(params); },
+                                       dispatchTimeoutMs);
     if (method == QLatin1String("Input.dispatchTouchEvent"))
-        return runOnGuiThreadBlocking([params]() { return QQmlAgentInput::dispatchTouchEvent(params); });
+        return runOnGuiThreadBlocking([params]() { return QQmlAgentInput::dispatchTouchEvent(params); },
+                                       dispatchTimeoutMs);
     if (method == QLatin1String("Input.dispatchKeyEvent"))
-        return runOnGuiThreadBlocking([params]() { return QQmlAgentInput::dispatchKeyEvent(params); });
+        return runOnGuiThreadBlocking([params]() { return QQmlAgentInput::dispatchKeyEvent(params); },
+                                       dispatchTimeoutMs);
     if (method == QLatin1String("Input.typeText"))
-        return runOnGuiThreadBlocking([params]() { return QQmlAgentInput::typeText(params); });
+        return runOnGuiThreadBlocking([params]() { return QQmlAgentInput::typeText(params); },
+                                       dispatchTimeoutMs);
     if (method == QLatin1String("Render.captureScreenshot"))
         return runOnGuiThreadBlocking([params]() { return QQmlAgentRender::captureScreenshot(params); });
     if (method == QLatin1String("Runtime.setProperty")) {
         if (!m_runtimeMutationEnabled)
             return runtimeMutationDisabledResult();
-        return runOnGuiThreadBlocking([params]() { return QQmlAgentRuntime::setProperty(params); });
+        return runOnGuiThreadBlocking([params]() { return QQmlAgentRuntime::setProperty(params); },
+                                       dispatchTimeoutMs);
     }
     if (method == QLatin1String("Runtime.invokeMethod")) {
         if (!m_runtimeMutationEnabled)
             return runtimeMutationDisabledResult();
-        return runOnGuiThreadBlocking([params]() { return QQmlAgentRuntime::invokeMethod(params); });
+        return runOnGuiThreadBlocking([params]() { return QQmlAgentRuntime::invokeMethod(params); },
+                                       dispatchTimeoutMs);
     }
     if (method == QLatin1String("Source.resolveNode")) {
         return runOnGuiThreadBlocking([params]() {
