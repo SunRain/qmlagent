@@ -463,6 +463,31 @@ static bool delegateCellSourceSupportsSelector(const QString &cellSource)
     return cellSource == QLatin1String("delegateRowColumn");
 }
 
+static void downgradeDelegateLocalSelectors(QJsonObject *node)
+{
+    // Plain id/objectName values repeat across delegate instances, so a
+    // "high" stability claim is false inside delegate context. The indexed
+    // selector appended below is the stable form.
+    QJsonArray selectors = node->value(QStringLiteral("selectors")).toArray();
+    bool changed = false;
+    for (QJsonValueRef selectorValue : selectors) {
+        QJsonObject entry = selectorValue.toObject();
+        const QString kind = entry.value(QStringLiteral("kind")).toString();
+        if ((kind == QLatin1String("id") || kind == QLatin1String("objectName"))
+                && entry.value(QStringLiteral("stability")).toString()
+                        == QLatin1String("high")) {
+            entry.insert(QStringLiteral("stability"), QStringLiteral("medium"));
+            entry.insert(QStringLiteral("reason"),
+                         QStringLiteral("value can repeat across delegate instances; "
+                                        "prefer the indexed selector when available"));
+            selectorValue = entry;
+            changed = true;
+        }
+    }
+    if (changed)
+        node->insert(QStringLiteral("selectors"), selectors);
+}
+
 static QJsonObject applyDelegateContext(QJsonObject node, int delegateIndex,
                                         const QString &indexSource)
 {
@@ -471,6 +496,7 @@ static QJsonObject applyDelegateContext(QJsonObject node, int delegateIndex,
     delegate.insert(QStringLiteral("index"), delegateIndex);
     delegate.insert(QStringLiteral("indexSource"), indexSource);
     node.insert(QStringLiteral("delegate"), delegate);
+    downgradeDelegateLocalSelectors(&node);
 
     const QString stableIdKind = stableIdKindForDelegateSelector(node);
     const QString stableId = stableIdForDelegateSelector(node);
@@ -503,6 +529,7 @@ static QJsonObject applyDelegateCellContext(QJsonObject node, int row, int colum
     delegate.insert(QStringLiteral("column"), column);
     delegate.insert(QStringLiteral("cellSource"), cellSource);
     node.insert(QStringLiteral("delegate"), delegate);
+    downgradeDelegateLocalSelectors(&node);
 
     const QString stableIdKind = stableIdKindForDelegateSelector(node);
     const QString stableId = stableIdForDelegateSelector(node);
