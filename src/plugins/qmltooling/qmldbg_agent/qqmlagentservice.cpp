@@ -46,6 +46,8 @@ static int guiDispatchTimeoutMsFor(const QString &method, const QJsonObject &par
     int extraBudgetMs = 0;
     if (method == QLatin1String("UI.waitFor"))
         extraBudgetMs = QQmlAgentUiTree::waitForBudgetMs(params);
+    else if (method == QLatin1String("UI.queryMany"))
+        extraBudgetMs = QQmlAgentUiTree::queryManyBudgetMs(params);
     else if (method.startsWith(QLatin1String("Input.")))
         extraBudgetMs = QQmlAgentInput::dispatchBudgetMs(method, params);
     else if (method.startsWith(QLatin1String("Runtime.")))
@@ -321,7 +323,8 @@ QJsonObject QQmlAgentService::dispatch(const QString &method, const QJsonObject 
     if (method == QLatin1String("UI.query"))
         return runOnGuiThreadBlocking([params]() { return QQmlAgentUiTree::query(params); });
     if (method == QLatin1String("UI.queryMany"))
-        return runOnGuiThreadBlocking([params]() { return QQmlAgentUiTree::queryMany(params); });
+        return runOnGuiThreadBlocking([params]() { return QQmlAgentUiTree::queryMany(params); },
+                                      dispatchTimeoutMs);
     if (method == QLatin1String("UI.waitFor"))
         return runOnGuiThreadBlocking([params]() { return QQmlAgentUiTree::waitFor(params); },
                                        dispatchTimeoutMs);

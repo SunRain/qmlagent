@@ -702,11 +702,16 @@ static QJsonObject nodeForObjectInternal(QObject *object, int windowId, int dept
         insertField(&node, options, QStringLiteral("bbox"), rectArray(itemBoxInWindow(item)));
         insertField(&node, options, QStringLiteral("insideViewport"), itemInsideViewport(item));
         insertField(&node, options, QStringLiteral("viewport"), itemViewportState(item));
-        const QJsonObject interactable = QQmlAgentActionability::state(object);
-        insertField(&node, options, QStringLiteral("actionable"),
-                    interactable.value(QStringLiteral("ok")).toBool());
-        if (options.fields.contains(QStringLiteral("interactable")))
-            node.insert(QStringLiteral("interactable"), interactable);
+        // Actionability walks overlays and input blockers; compute it only
+        // when the projection actually asks for it.
+        if (fieldRequested(options, QStringLiteral("actionable"))
+                || options.fields.contains(QStringLiteral("interactable"))) {
+            const QJsonObject interactable = QQmlAgentActionability::state(object);
+            insertField(&node, options, QStringLiteral("actionable"),
+                        interactable.value(QStringLiteral("ok")).toBool());
+            if (options.fields.contains(QStringLiteral("interactable")))
+                node.insert(QStringLiteral("interactable"), interactable);
+        }
     }
 
     QJsonArray selectors;
@@ -1644,6 +1649,16 @@ QJsonObject QQmlAgentUiTree::queryMany(const QJsonObject &params)
         { QStringLiteral("results"), results },
         { QStringLiteral("resultCount"), results.size() },
     };
+}
+
+int QQmlAgentUiTree::queryManyBudgetMs(const QJsonObject &params)
+{
+    // Each batched query walks the tree independently; grant the dispatch
+    // deadline a per-entry budget so full batches on large trees do not
+    // produce false session.gui_thread_timeout results.
+    constexpr int PerBatchedQueryBudgetMs = 250;
+    const int count = qBound(0, int(params.value(QStringLiteral("queries")).toArray().size()), 50);
+    return count * PerBatchedQueryBudgetMs;
 }
 
 namespace {
