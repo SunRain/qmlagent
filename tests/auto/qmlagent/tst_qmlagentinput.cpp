@@ -38,6 +38,7 @@ private slots:
     void waitForObservesInvisibleProperty();
     void waitForPrefersUniqueVisibleMatch();
     void dispatchBudgetsCoverLongRunningRequests();
+    void selectorStabilityReflectsTreeUniqueness();
 };
 
 static QJsonObject clickNode(int nodeId)
@@ -316,6 +317,56 @@ void tst_QQmlAgentInput::dispatchBudgetsCoverLongRunningRequests()
         { QStringLiteral("settle"), QJsonObject{ { QStringLiteral("timeoutMs"), 600000 } } },
     };
     QVERIFY(QQmlAgentInput::dispatchBudgetMs(QStringLiteral("Input.clickNode"), hugeSettle) <= 60000);
+}
+
+static QString objectNameSelectorStability(const QJsonObject &tree, const QString &objectName)
+{
+    QList<QJsonObject> stack;
+    const QJsonArray windows = tree.value(QStringLiteral("windows")).toArray();
+    for (const QJsonValue &window : windows)
+        stack.append(window.toObject().value(QStringLiteral("root")).toObject());
+    while (!stack.isEmpty()) {
+        const QJsonObject node = stack.takeLast();
+        const QJsonArray children = node.value(QStringLiteral("children")).toArray();
+        for (const QJsonValue &child : children)
+            stack.append(child.toObject());
+        if (node.value(QStringLiteral("objectName")).toString() != objectName)
+            continue;
+        const QJsonArray selectors = node.value(QStringLiteral("selectors")).toArray();
+        for (const QJsonValue &selectorValue : selectors) {
+            const QJsonObject selector = selectorValue.toObject();
+            if (selector.value(QStringLiteral("kind")).toString()
+                    == QLatin1String("objectName")) {
+                return selector.value(QStringLiteral("stability")).toString();
+            }
+        }
+    }
+    return {};
+}
+
+void tst_QQmlAgentInput::selectorStabilityReflectsTreeUniqueness()
+{
+    QQuickWindow window;
+    window.resize(200, 200);
+
+    QQuickItem first;
+    first.setParentItem(window.contentItem());
+    first.setObjectName(QStringLiteral("duplicateName"));
+    QQuickItem second;
+    second.setParentItem(window.contentItem());
+    second.setObjectName(QStringLiteral("duplicateName"));
+    QQuickItem third;
+    third.setParentItem(window.contentItem());
+    third.setObjectName(QStringLiteral("uniqueName"));
+
+    const QJsonObject tree = QQmlAgentUiTree::getTree({
+        { QStringLiteral("includeInvisible"), true },
+    });
+
+    QCOMPARE(objectNameSelectorStability(tree, QStringLiteral("duplicateName")),
+             QStringLiteral("medium"));
+    QCOMPARE(objectNameSelectorStability(tree, QStringLiteral("uniqueName")),
+             QStringLiteral("high"));
 }
 
 QTEST_MAIN(tst_QQmlAgentInput)

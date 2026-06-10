@@ -222,6 +222,44 @@ static QJsonValue jsonValueFromVariant(const QVariant &value)
     }
 }
 
+struct SelectorUniquenessIndex
+{
+    QHash<QString, int> idCounts;
+    QHash<QString, int> objectNameCounts;
+};
+
+// QML ids are only unique per component scope and objectName is not enforced
+// at all, so a "high" stability claim must be backed by uniqueness in the
+// current tree. Counted over invisible nodes too, because node resolution for
+// input targets queries with includeInvisible.
+static SelectorUniquenessIndex buildSelectorUniquenessIndex()
+{
+    SelectorUniquenessIndex index;
+    const QWindowList windows = QGuiApplication::allWindows();
+    for (QWindow *window : windows) {
+        QQuickWindow *quickWindow = qobject_cast<QQuickWindow *>(window);
+        if (!quickWindow || !quickWindow->contentItem())
+            continue;
+        QVector<QQuickItem *> stack{ quickWindow->contentItem() };
+        QSet<QQuickItem *> seen;
+        while (!stack.isEmpty()) {
+            QQuickItem *item = stack.takeLast();
+            if (!item || seen.contains(item))
+                continue;
+            seen.insert(item);
+            const QString qmlId = qmlIdForObject(item);
+            if (!qmlId.isEmpty())
+                ++index.idCounts[qmlId];
+            if (!item->objectName().isEmpty())
+                ++index.objectNameCounts[item->objectName()];
+            const QList<QQuickItem *> children = item->childItems();
+            for (QQuickItem *child : children)
+                stack.append(child);
+        }
+    }
+    return index;
+}
+
 struct TreeBuildOptions
 {
     bool includeInvisible = false;
@@ -230,6 +268,7 @@ struct TreeBuildOptions
     QSet<QString> fields;
     int maxNodes = -1;
     bool collapseRepeated = false;
+    SelectorUniquenessIndex uniqueness;
 };
 
 struct TreeBuildState
@@ -672,10 +711,23 @@ static QJsonObject nodeForObjectInternal(QObject *object, int windowId, int dept
 
     QJsonArray selectors;
     selectors.append(selector(QStringLiteral("nodeId"), QString::number(nodeId), QStringLiteral("high")));
-    if (!qmlId.isEmpty())
-        selectors.append(selector(QStringLiteral("id"), qmlId, QStringLiteral("high")));
-    if (!object->objectName().isEmpty())
-        selectors.append(selector(QStringLiteral("objectName"), object->objectName(), QStringLiteral("high")));
+    if (!qmlId.isEmpty()) {
+        const bool unique = options.uniqueness.idCounts.value(qmlId, 1) <= 1;
+        selectors.append(unique
+                ? selector(QStringLiteral("id"), qmlId, QStringLiteral("high"))
+                : selector(QStringLiteral("id"), qmlId, QStringLiteral("medium"),
+                           QStringLiteral("id is not unique in the current UI tree")));
+    }
+    if (!object->objectName().isEmpty()) {
+        const bool unique =
+                options.uniqueness.objectNameCounts.value(object->objectName(), 1) <= 1;
+        selectors.append(unique
+                ? selector(QStringLiteral("objectName"), object->objectName(),
+                           QStringLiteral("high"))
+                : selector(QStringLiteral("objectName"), object->objectName(),
+                           QStringLiteral("medium"),
+                           QStringLiteral("objectName is not unique in the current UI tree")));
+    }
     if (textIndex >= 0 && !object->property("text").toString().isEmpty()) {
         selectors.append(selector(QStringLiteral("text"), object->property("text").toString(),
                                   QStringLiteral("low"), QStringLiteral("text may be translated")));
@@ -754,6 +806,7 @@ QJsonObject QQmlAgentUiTree::nodeForObject(QObject *object, int windowId, int de
                                            const QString &visualPath)
 {
     TreeBuildOptions options;
+    options.uniqueness = buildSelectorUniquenessIndex();
     options.includeInvisible = includeInvisible;
     options.includeSource = includeSource;
     options.properties = properties;
@@ -866,6 +919,7 @@ QJsonObject QQmlAgentUiTree::getTree(const QJsonObject &params)
 {
     const int depth = params.value(QStringLiteral("depth")).toInt(-1);
     TreeBuildOptions options;
+    options.uniqueness = buildSelectorUniquenessIndex();
     options.includeInvisible = params.value(QStringLiteral("includeInvisible")).toBool(false);
     options.includeSource = params.value(QStringLiteral("includeSource")).toBool(true);
     options.properties = propertiesFromParams(params);
@@ -1432,8 +1486,10 @@ QJsonObject QQmlAgentUiTree::query(const QJsonObject &params)
     const QString value = criteria.value;
 
     const bool includeInvisible = params.value(QStringLiteral("includeInvisible")).toBool(false);
+    const SelectorUniquenessIndex uniqueness = buildSelectorUniquenessIndex();
 
     TreeBuildOptions matchOptions;
+    matchOptions.uniqueness = uniqueness;
     matchOptions.includeInvisible = includeInvisible;
     matchOptions.includeSource = kind == QLatin1String("sourceLocation");
     matchOptions.fields.insert(QStringLiteral("nodeId"));
@@ -1446,6 +1502,7 @@ QJsonObject QQmlAgentUiTree::query(const QJsonObject &params)
         matchOptions.fields.insert(QStringLiteral("typeAliases"));
 
     TreeBuildOptions resultOptions;
+    resultOptions.uniqueness = uniqueness;
     resultOptions.includeInvisible = includeInvisible;
     resultOptions.includeSource = params.value(QStringLiteral("includeSource")).toBool(true)
             || kind == QLatin1String("sourceLocation");
