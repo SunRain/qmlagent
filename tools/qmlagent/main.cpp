@@ -819,14 +819,24 @@ static QJsonArray launcherSessionSummaries(const QList<LauncherSession> &session
     return summaries;
 }
 
-static bool resolveLauncherSession(int timeoutMs, LauncherSession *selected, QString *error)
+static bool resolveLauncherSession(int timeoutMs, LauncherSession *selected, QString *error,
+                                   const QString &wantedSessionId = QString())
 {
     QList<LauncherSession> reachable;
     for (const LauncherSession &session : discoverLauncherSessions(timeoutMs)) {
-        if (session.status.value(QStringLiteral("controlReachable")).toBool(true))
-            reachable.append(session);
+        if (!session.status.value(QStringLiteral("controlReachable")).toBool(true))
+            continue;
+        if (!wantedSessionId.isEmpty() && !session.id.startsWith(wantedSessionId))
+            continue;
+        reachable.append(session);
     }
     if (reachable.isEmpty()) {
+        if (!wantedSessionId.isEmpty()) {
+            *error = QStringLiteral("No live qmlagent-launcher session matches --session %1. "
+                                    "Run qmlagentctl sessions to list live sessions.")
+                             .arg(wantedSessionId);
+            return false;
+        }
         *error = QStringLiteral("No live qmlagent-launcher session found.\n\n"
                                 "Start one of these first:\n"
                                 "  qmlagent-launcher preview <Main.qml>\n"
@@ -835,7 +845,7 @@ static bool resolveLauncherSession(int timeoutMs, LauncherSession *selected, QSt
     }
     if (reachable.size() > 1) {
         *error = QStringLiteral("Multiple live qmlagent-launcher sessions found. "
-                                "Stop one session or add session selection support. Sessions: %1")
+                                "Pin one with --session <id>. Sessions: %1")
                          .arg(QString::fromUtf8(QJsonDocument(launcherSessionSummaries(reachable))
                                                     .toJson(QJsonDocument::Compact)));
         return false;
@@ -868,9 +878,18 @@ static QJsonObject stopUnreachableLauncherFallback(const LauncherSession &sessio
 }
 
 static bool resolveLauncherSessionForStop(int timeoutMs, LauncherSession *selected,
-                                          QJsonObject *fallbackResult, QString *error)
+                                          QJsonObject *fallbackResult, QString *error,
+                                          const QString &wantedSessionId = QString())
 {
     QList<LauncherSession> sessions = discoverLauncherSessions(timeoutMs);
+    if (!wantedSessionId.isEmpty()) {
+        QList<LauncherSession> matching;
+        for (const LauncherSession &session : sessions) {
+            if (session.id.startsWith(wantedSessionId))
+                matching.append(session);
+        }
+        sessions = matching;
+    }
     QList<LauncherSession> reachable;
     for (const LauncherSession &session : sessions) {
         if (session.status.value(QStringLiteral("controlReachable")).toBool(true))
@@ -883,7 +902,7 @@ static bool resolveLauncherSessionForStop(int timeoutMs, LauncherSession *select
     }
     if (reachable.size() > 1) {
         *error = QStringLiteral("Multiple live qmlagent-launcher sessions found. "
-                                "Stop one session or add session selection support. Sessions: %1")
+                                "Pin one with --session <id>. Sessions: %1")
                          .arg(QString::fromUtf8(QJsonDocument(launcherSessionSummaries(reachable))
                                                     .toJson(QJsonDocument::Compact)));
         return false;
@@ -1009,6 +1028,7 @@ static int runCtlSubcommand(const QStringList &arguments)
 
     const QString command = arguments.at(1);
     const QString format = argumentValue(arguments, QStringLiteral("--format"), QStringLiteral("pretty"));
+    const QString wantedSession = argumentValue(arguments, QStringLiteral("--session"));
     bool ok = false;
     const int timeoutMs = argumentValue(arguments, QStringLiteral("--timeout"), QStringLiteral("5000")).toInt(&ok);
     if (!ok || timeoutMs <= 0)
@@ -1057,16 +1077,17 @@ static int runCtlSubcommand(const QStringList &arguments)
     QJsonObject stopFallbackResult;
     if (command == QLatin1String("stop")) {
         if (!resolveLauncherSessionForStop(timeoutMs, &launcher, &stopFallbackResult,
-                                           &launcherError)) {
+                                           &launcherError, wantedSession)) {
             if (!stopFallbackResult.isEmpty()) {
                 printJsonObject(stopFallbackResult, format);
                 return stopFallbackResult.value(QStringLiteral("ok")).toBool(false) ? 0 : 1;
             }
             return fail(launcherError);
         }
-    } else if (!resolveLauncherSession(timeoutMs, &launcher, &launcherError)) {
+    } else if (!resolveLauncherSession(timeoutMs, &launcher, &launcherError, wantedSession)) {
         return fail(launcherError);
     }
+
 
     QString controlMethod;
     QJsonObject controlParams;

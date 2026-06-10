@@ -214,6 +214,9 @@ Use `qmlagentctl` when MCP is unavailable or a shell command is simpler:
 "$QT_BIN/qmlagentctl" stop
 ```
 
+With multiple live launcher sessions, pin commands to one with
+`--session <id>`; `qmlagentctl sessions` lists ids.
+
 Raw protocol escape hatch:
 
 ```
