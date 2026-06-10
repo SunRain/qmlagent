@@ -22,6 +22,7 @@
 #include <QtGui/qguiapplication.h>
 #include <QtGui/qwindow.h>
 #include <QtQml/qqmlcontext.h>
+#include <QtQml/qqmlproperty.h>
 #include <QtQml/qqmlengine.h>
 #include <QtQuick/qquickitem.h>
 #include <QtQuick/qquickwindow.h>
@@ -119,29 +120,30 @@ static QJsonArray typeAliases(QObject *object, const QString &primaryType)
 
 static QString qmlIdForObject(const QObject *object)
 {
+    // Identity comes from the instantiating document only. Falling through
+    // to the object's own context leaks the implementation file's internal
+    // id (every style-built ToolButton would claim id "control") and steers
+    // agents toward selectors that are ambiguous by construction (F-009).
+    const QQmlData *data = QQmlData::get(object);
+    if (!data || !data->outerContext)
+        return {};
+    return data->outerContext->findObjectId(object);
+}
+
+static QString implementationIdForObject(const QObject *object, const QString &authoredId)
+{
     const QQmlData *data = QQmlData::get(object);
     if (!data)
         return {};
 
-    if (data->outerContext) {
-        const QString id = data->outerContext->findObjectId(object);
-        if (!id.isEmpty())
-            return id;
-    }
-
-    if (data->context) {
-        const QString id = data->context->findObjectId(object);
-        if (!id.isEmpty())
-            return id;
-    }
-
-    if (data->ownContext) {
-        const QString id = data->ownContext->findObjectId(object);
-        if (!id.isEmpty())
-            return id;
-    }
-
-    return {};
+    QString id;
+    if (data->context)
+        id = data->context->findObjectId(object);
+    if (id.isEmpty() && data->ownContext)
+        id = data->ownContext->findObjectId(object);
+    if (id == authoredId)
+        return {};
+    return id;
 }
 
 static QJsonObject selector(const QString &kind, const QString &value, const QString &stability,
@@ -240,6 +242,11 @@ static SelectorUniquenessIndex buildSelectorUniquenessIndex()
         QQuickWindow *quickWindow = qobject_cast<QQuickWindow *>(window);
         if (!quickWindow || !quickWindow->contentItem())
             continue;
+        const QString windowQmlId = qmlIdForObject(quickWindow);
+        if (!windowQmlId.isEmpty())
+            ++index.idCounts[windowQmlId];
+        if (!quickWindow->objectName().isEmpty())
+            ++index.objectNameCounts[quickWindow->objectName()];
         QVector<QQuickItem *> stack{ quickWindow->contentItem() };
         QSet<QQuickItem *> seen;
         while (!stack.isEmpty()) {
@@ -681,12 +688,22 @@ static QJsonObject nodeForObjectInternal(QObject *object, int windowId, int dept
     insertField(&node, options, QStringLiteral("kind"),
                 item ? QStringLiteral("QQuickItem") : QStringLiteral("QObject"));
     insertField(&node, options, QStringLiteral("type"), typeName);
+    // Native style renderer items register under control type names
+    // (NativeStyle.CheckBox); expose the distinction as evidence (F-007).
+    if (object->inherits("QQuickStyleItem"))
+        insertField(&node, options, QStringLiteral("styleItem"), true);
     if (!aliases.isEmpty())
         insertField(&node, options, QStringLiteral("typeAliases"), aliases);
     insertField(&node, options, QStringLiteral("objectName"), object->objectName());
     insertField(&node, options, QStringLiteral("visualPath"), nodeVisualPath);
     if (!qmlId.isEmpty())
         insertField(&node, options, QStringLiteral("qmlId"), qmlId);
+    const QString implementationId = implementationIdForObject(object, qmlId);
+    if (!implementationId.isEmpty()) {
+        // Evidence only: the id inside the component's implementation file.
+        // Not the node's identity and not emitted as a selector.
+        insertField(&node, options, QStringLiteral("implementationId"), implementationId);
+    }
 
     const int textIndex = object->metaObject()->indexOfProperty("text");
     if (textIndex >= 0)
@@ -766,6 +783,14 @@ static QJsonObject nodeForObjectInternal(QObject *object, int windowId, int dept
     if (!options.properties.isEmpty()) {
         QJsonObject propertyObject;
         for (const QString &property : options.properties) {
+            if (property.contains(QLatin1Char('.'))) {
+                // Dotted paths reach grouped and sub-object state such as
+                // RangeSlider first.value or font.pixelSize (F-006).
+                const QQmlProperty qmlProperty(object, property);
+                if (qmlProperty.isValid())
+                    propertyObject.insert(property, jsonValueFromVariant(qmlProperty.read()));
+                continue;
+            }
             const int index = object->metaObject()->indexOfProperty(property.toUtf8().constData());
             if (index >= 0)
                 propertyObject.insert(property, jsonValueFromVariant(object->property(property.toUtf8())));
@@ -967,18 +992,25 @@ QJsonObject QQmlAgentUiTree::getTree(const QJsonObject &params)
             continue;
         ++windowId;
         QSet<QObject *> seen;
+        // The window object itself is addressable evidence (F-003): its
+        // authored id, title, and visibility are selectable like any node.
+        QJsonObject windowNode = nodeForObjectInternal(quickWindow, windowId, 0,
+                                                       options, &seen, nullptr, {});
         QJsonObject root = nodeForObjectInternal(quickWindow->contentItem(), windowId, depth,
                                                  options, &seen, &state, {});
         if (hasSelector)
             root = pruneToSelector(root, selectorCriteria);
-        if (hasSelector && root.isEmpty())
+        if (hasSelector && root.isEmpty()
+                && !nodeMatchesSelector(windowNode, selectorCriteria)) {
             continue;
+        }
         windows.append(QJsonObject{
             { QStringLiteral("windowId"), windowId },
             { QStringLiteral("title"), quickWindow->title() },
             { QStringLiteral("width"), quickWindow->width() },
             { QStringLiteral("height"), quickWindow->height() },
             { QStringLiteral("devicePixelRatio"), quickWindow->devicePixelRatio() },
+            { QStringLiteral("window"), windowNode },
             { QStringLiteral("root"), root },
         });
     }
@@ -1332,6 +1364,9 @@ static QJsonArray collectQueryMatches(const SelectorCriteria &criteria,
             continue;
         ++windowId;
         QSet<QObject *> seen;
+        collectQueryMatchesFromObject(quickWindow, windowId, criteria,
+                                      matchOptions, resultOptions, resultDepth, maxMatches,
+                                      truncated, &matches, &seen, {});
         collectQueryMatchesFromObject(quickWindow->contentItem(), windowId, criteria,
                                       matchOptions, resultOptions, resultDepth, maxMatches,
                                       truncated, &matches, &seen, {});
@@ -1503,8 +1538,10 @@ QJsonObject QQmlAgentUiTree::query(const QJsonObject &params)
     const QString selectorField = fieldForSelectorKind(kind);
     if (!selectorField.isEmpty())
         matchOptions.fields.insert(selectorField);
-    if (kind == QLatin1String("type"))
+    if (kind == QLatin1String("type")) {
         matchOptions.fields.insert(QStringLiteral("typeAliases"));
+        matchOptions.fields.insert(QStringLiteral("styleItem"));
+    }
 
     TreeBuildOptions resultOptions;
     resultOptions.uniqueness = uniqueness;
@@ -1515,6 +1552,8 @@ QJsonObject QQmlAgentUiTree::query(const QJsonObject &params)
     resultOptions.fields = fieldsFromParams(params);
     if (!resultOptions.properties.isEmpty() && !resultOptions.fields.isEmpty())
         resultOptions.fields.insert(QStringLiteral("properties"));
+    if (kind == QLatin1String("type") && !resultOptions.fields.isEmpty())
+        resultOptions.fields.insert(QStringLiteral("styleItem"));
 
     bool truncated = false;
     const int maxMatches = params.contains(QStringLiteral("maxNodes"))
@@ -1537,6 +1576,25 @@ QJsonObject QQmlAgentUiTree::query(const QJsonObject &params)
         for (const QJsonValue &match : std::as_const(matches))
             projectedMatches.append(projectNode(match.toObject(), projectedFields));
         matches = projectedMatches;
+    }
+
+    const bool includeStyleItems =
+            params.value(QStringLiteral("includeStyleItems")).toBool(false);
+    QJsonArray excludedStyleMatches;
+    if (kind == QLatin1String("type") && !includeStyleItems && matches.size() > 1) {
+        QJsonArray nonStyle;
+        for (const QJsonValue &match : std::as_const(matches)) {
+            if (match.toObject().value(QStringLiteral("styleItem")).toBool())
+                excludedStyleMatches.append(match);
+            else
+                nonStyle.append(match);
+        }
+        // Only when this resolves the ambiguity; otherwise return the full
+        // ambiguity with candidates and style flags.
+        if (nonStyle.size() == 1)
+            matches = nonStyle;
+        else
+            excludedStyleMatches = QJsonArray();
     }
 
     QJsonArray diagnostics;
@@ -1586,6 +1644,12 @@ QJsonObject QQmlAgentUiTree::query(const QJsonObject &params)
         { QStringLiteral("matches"), matches },
         { QStringLiteral("diagnostics"), diagnostics },
     };
+    if (!excludedStyleMatches.isEmpty()) {
+        result.insert(QStringLiteral("styleItemMatchesExcluded"),
+                      excludedStyleMatches.size());
+        result.insert(QStringLiteral("styleItemExclusionNote"),
+                      QStringLiteral("Native style items matching this type were excluded because one authored control resolves the selector; pass includeStyleItems:true to match them."));
+    }
     if (truncated) {
         result.insert(QStringLiteral("truncated"), true);
         result.insert(QStringLiteral("nextHints"), QJsonArray{ QJsonObject{

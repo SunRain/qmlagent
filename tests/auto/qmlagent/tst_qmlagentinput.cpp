@@ -40,6 +40,7 @@ private slots:
     void dispatchBudgetsCoverLongRunningRequests();
     void selectorStabilityReflectsTreeUniqueness();
     void queryManyAlignsResultsAndAppliesDefaults();
+    void windowObjectIsAddressable();
 };
 
 static QJsonObject clickNode(int nodeId)
@@ -424,6 +425,40 @@ void tst_QQmlAgentInput::queryManyAlignsResultsAndAppliesDefaults()
     QCOMPARE(overflow.value(QStringLiteral("diagnostics")).toArray().at(0).toObject()
                      .value(QStringLiteral("id")).toString(),
              QStringLiteral("batch.too_many_queries"));
+}
+
+void tst_QQmlAgentInput::windowObjectIsAddressable()
+{
+    QQuickWindow window;
+    window.setObjectName(QStringLiteral("evalMainWindow"));
+    window.setTitle(QStringLiteral("Eval Window"));
+    window.resize(200, 200);
+
+    const QJsonObject tree = QQmlAgentUiTree::getTree({});
+    const QJsonArray windows = tree.value(QStringLiteral("windows")).toArray();
+    QVERIFY(!windows.isEmpty());
+    bool found = false;
+    for (const QJsonValue &entry : windows) {
+        const QJsonObject windowNode = entry.toObject()
+                .value(QStringLiteral("window")).toObject();
+        if (windowNode.value(QStringLiteral("objectName")).toString()
+                == QLatin1String("evalMainWindow")) {
+            found = true;
+            QCOMPARE(windowNode.value(QStringLiteral("kind")).toString(),
+                     QStringLiteral("QObject"));
+        }
+    }
+    QVERIFY2(found, "window object node missing from UI.getTree");
+
+    const QJsonObject queried = QQmlAgentUiTree::query({
+        { QStringLiteral("selector"), QStringLiteral("objectName=\"evalMainWindow\"") },
+        { QStringLiteral("properties"), QJsonArray{ QStringLiteral("title") } },
+    });
+    const QJsonArray matches = queried.value(QStringLiteral("matches")).toArray();
+    QCOMPARE(matches.size(), 1);
+    QCOMPARE(matches.at(0).toObject().value(QStringLiteral("properties")).toObject()
+                     .value(QStringLiteral("title")).toString(),
+             QStringLiteral("Eval Window"));
 }
 
 QTEST_MAIN(tst_QQmlAgentInput)
