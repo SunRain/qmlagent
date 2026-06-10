@@ -64,6 +64,7 @@ static const QStringList &agentMethods()
         QStringLiteral("Log.clear"),
         QStringLiteral("UI.getTree"),
         QStringLiteral("UI.query"),
+        QStringLiteral("UI.queryMany"),
         QStringLiteral("UI.waitFor"),
         QStringLiteral("UI.describeNode"),
         QStringLiteral("UI.getBoxModel"),
@@ -319,6 +320,8 @@ QJsonObject QQmlAgentService::dispatch(const QString &method, const QJsonObject 
         return runOnGuiThreadBlocking([params]() { return QQmlAgentUiTree::getTree(params); });
     if (method == QLatin1String("UI.query"))
         return runOnGuiThreadBlocking([params]() { return QQmlAgentUiTree::query(params); });
+    if (method == QLatin1String("UI.queryMany"))
+        return runOnGuiThreadBlocking([params]() { return QQmlAgentUiTree::queryMany(params); });
     if (method == QLatin1String("UI.waitFor"))
         return runOnGuiThreadBlocking([params]() { return QQmlAgentUiTree::waitFor(params); },
                                        dispatchTimeoutMs);

@@ -39,6 +39,7 @@ private slots:
     void waitForPrefersUniqueVisibleMatch();
     void dispatchBudgetsCoverLongRunningRequests();
     void selectorStabilityReflectsTreeUniqueness();
+    void queryManyAlignsResultsAndAppliesDefaults();
 };
 
 static QJsonObject clickNode(int nodeId)
@@ -367,6 +368,62 @@ void tst_QQmlAgentInput::selectorStabilityReflectsTreeUniqueness()
              QStringLiteral("medium"));
     QCOMPARE(objectNameSelectorStability(tree, QStringLiteral("uniqueName")),
              QStringLiteral("high"));
+}
+
+void tst_QQmlAgentInput::queryManyAlignsResultsAndAppliesDefaults()
+{
+    QQuickWindow window;
+    window.resize(200, 200);
+    QQuickItem first;
+    first.setParentItem(window.contentItem());
+    first.setObjectName(QStringLiteral("batchFirst"));
+    first.setWidth(11);
+    QQuickItem second;
+    second.setParentItem(window.contentItem());
+    second.setObjectName(QStringLiteral("batchSecond"));
+    second.setWidth(22);
+
+    const QJsonObject batch = QQmlAgentUiTree::queryMany({
+        { QStringLiteral("queries"), QJsonArray{
+            QJsonObject{ { QStringLiteral("selector"), QStringLiteral("objectName=\"batchFirst\"") } },
+            QJsonObject{ { QStringLiteral("selector"), QStringLiteral("objectName=\"batchSecond\"") } },
+        } },
+        { QStringLiteral("defaults"), QJsonObject{
+            { QStringLiteral("includeInvisible"), true },
+            { QStringLiteral("properties"), QJsonArray{ QStringLiteral("width") } },
+        } },
+    });
+
+    QCOMPARE(batch.value(QStringLiteral("resultCount")).toInt(), 2);
+    const QJsonArray results = batch.value(QStringLiteral("results")).toArray();
+    QCOMPARE(results.size(), 2);
+    const QJsonObject firstMatch = results.at(0).toObject()
+            .value(QStringLiteral("matches")).toArray().at(0).toObject();
+    const QJsonObject secondMatch = results.at(1).toObject()
+            .value(QStringLiteral("matches")).toArray().at(0).toObject();
+    QCOMPARE(firstMatch.value(QStringLiteral("objectName")).toString(),
+             QStringLiteral("batchFirst"));
+    QCOMPARE(secondMatch.value(QStringLiteral("objectName")).toString(),
+             QStringLiteral("batchSecond"));
+    QCOMPARE(firstMatch.value(QStringLiteral("properties")).toObject()
+                     .value(QStringLiteral("width")).toDouble(), 11.0);
+    QCOMPARE(secondMatch.value(QStringLiteral("properties")).toObject()
+                     .value(QStringLiteral("width")).toDouble(), 22.0);
+
+    const QJsonObject empty = QQmlAgentUiTree::queryMany({});
+    QCOMPARE(empty.value(QStringLiteral("diagnostics")).toArray().at(0).toObject()
+                     .value(QStringLiteral("id")).toString(),
+             QStringLiteral("batch.queries_required"));
+
+    QJsonArray tooMany;
+    for (int i = 0; i < 51; ++i)
+        tooMany.append(QJsonObject{ { QStringLiteral("selector"), QStringLiteral("nodeId=1") } });
+    const QJsonObject overflow = QQmlAgentUiTree::queryMany({
+        { QStringLiteral("queries"), tooMany },
+    });
+    QCOMPARE(overflow.value(QStringLiteral("diagnostics")).toArray().at(0).toObject()
+                     .value(QStringLiteral("id")).toString(),
+             QStringLiteral("batch.too_many_queries"));
 }
 
 QTEST_MAIN(tst_QQmlAgentInput)

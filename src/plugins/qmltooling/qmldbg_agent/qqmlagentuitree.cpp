@@ -1591,6 +1591,61 @@ QJsonObject QQmlAgentUiTree::query(const QJsonObject &params)
     return result;
 }
 
+QJsonObject QQmlAgentUiTree::queryMany(const QJsonObject &params)
+{
+    static constexpr int MaxBatchQueries = 50;
+
+    const auto batchDiagnostic = [](const QString &id, const QString &message) {
+        return QJsonObject{
+            { QStringLiteral("id"), id },
+            { QStringLiteral("severity"), QStringLiteral("error") },
+            { QStringLiteral("confidence"), 1.0 },
+            { QStringLiteral("message"), message },
+        };
+    };
+
+    const QJsonValue queriesValue = params.value(QStringLiteral("queries"));
+    const QJsonArray queries = queriesValue.toArray();
+    if (!queriesValue.isArray() || queries.isEmpty()) {
+        return {
+            { QStringLiteral("results"), QJsonArray() },
+            { QStringLiteral("diagnostics"), QJsonArray{ batchDiagnostic(
+                QStringLiteral("batch.queries_required"),
+                QStringLiteral("UI.queryMany requires a non-empty queries array.")) } },
+        };
+    }
+    if (queries.size() > MaxBatchQueries) {
+        QJsonObject diagnostic = batchDiagnostic(
+                QStringLiteral("batch.too_many_queries"),
+                QStringLiteral("UI.queryMany accepts at most %1 queries per batch.")
+                        .arg(MaxBatchQueries));
+        diagnostic.insert(QStringLiteral("actualQueries"), queries.size());
+        diagnostic.insert(QStringLiteral("maxQueries"), MaxBatchQueries);
+        diagnostic.insert(QStringLiteral("hint"),
+                          QStringLiteral("Split the batch; result order stays aligned with the queries array."));
+        return {
+            { QStringLiteral("results"), QJsonArray() },
+            { QStringLiteral("diagnostics"), QJsonArray{ diagnostic } },
+        };
+    }
+
+    const QJsonObject defaults = params.value(QStringLiteral("defaults")).toObject();
+    QJsonArray results;
+    for (const QJsonValue &entryValue : queries) {
+        QJsonObject entry = entryValue.toObject();
+        for (auto it = defaults.constBegin(), end = defaults.constEnd(); it != end; ++it) {
+            if (!entry.contains(it.key()))
+                entry.insert(it.key(), it.value());
+        }
+        results.append(query(entry));
+    }
+
+    return {
+        { QStringLiteral("results"), results },
+        { QStringLiteral("resultCount"), results.size() },
+    };
+}
+
 namespace {
 
 struct WaitCondition

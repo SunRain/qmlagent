@@ -99,6 +99,25 @@ QJsonObject summarizedQueryResult(const QJsonObject &result)
     return summary;
 }
 
+QJsonObject summarizedQueryManyResult(const QJsonObject &result)
+{
+    if (!result.contains(QStringLiteral("results")))
+        return result;
+
+    QJsonArray summarized;
+    const QJsonArray results = result.value(QStringLiteral("results")).toArray();
+    for (const QJsonValue &entry : results)
+        summarized.append(summarizedQueryResult(entry.toObject()));
+
+    QJsonObject summary{
+        { QStringLiteral("results"), summarized },
+        { QStringLiteral("resultCount"), summarized.size() },
+    };
+    if (result.contains(QStringLiteral("diagnostics")))
+        summary.insert(QStringLiteral("diagnostics"), result.value(QStringLiteral("diagnostics")));
+    return summary;
+}
+
 QJsonObject summarizedWorkflowReport(const QJsonObject &report)
 {
     QJsonObject inputResult = report.value(QStringLiteral("input")).toObject();

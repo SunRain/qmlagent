@@ -7,6 +7,7 @@
 #include <QtCore/qjsonobject.h>
 
 QJsonObject summarizedQueryResult(const QJsonObject &result);
+QJsonObject summarizedQueryManyResult(const QJsonObject &result);
 QJsonObject summarizedWorkflowReport(const QJsonObject &report);
 
 #endif // QMLAGENTMCPOUTPUT_H

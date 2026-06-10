@@ -174,6 +174,37 @@ QJsonArray toolList()
                      } },
                  } },
              }, { QStringLiteral("selector") })),
+        tool(QStringLiteral("qmlagent.ui_query_many"),
+             QStringLiteral("Batch verification reads: run several UI.query selectors in one round trip and return results aligned with the queries array. Prefer this over sequential qmlagent.ui_query calls when checking multiple nodes/properties after an action; it saves agent round trips and tokens. Per-entry fields mirror qmlagent.ui_query; defaults applies shared options to entries that omit them. At most 50 queries per batch. Defaults to verbosity=\"summary\"."),
+             schema({
+                 { QStringLiteral("queries"), QJsonObject{
+                     { QStringLiteral("type"), QStringLiteral("array") },
+                     { QStringLiteral("description"), QStringLiteral("Per-entry UI.query parameters; selector is required in each entry unless supplied through defaults.") },
+                     { QStringLiteral("items"), QJsonObject{
+                         { QStringLiteral("type"), QStringLiteral("object") },
+                         { QStringLiteral("properties"), QJsonObject{
+                             { QStringLiteral("selector"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("string") } } },
+                             { QStringLiteral("includeSource"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("boolean") } } },
+                             { QStringLiteral("fields"), stringArray },
+                             { QStringLiteral("properties"), stringArray },
+                             { QStringLiteral("maxNodes"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("integer") } } },
+                         } },
+                         { QStringLiteral("additionalProperties"), false },
+                     } },
+                 } },
+                 { QStringLiteral("defaults"), QJsonObject{
+                     { QStringLiteral("type"), QStringLiteral("object") },
+                     { QStringLiteral("description"), QStringLiteral("Shared UI.query options merged into entries that do not set them, for example {\"properties\":[\"text\"],\"maxNodes\":5}.") },
+                 } },
+                 { QStringLiteral("verbosity"), QJsonObject{
+                     { QStringLiteral("type"), QStringLiteral("string") },
+                     { QStringLiteral("default"), QStringLiteral("summary") },
+                     { QStringLiteral("enum"), QJsonArray{
+                         QStringLiteral("full"),
+                         QStringLiteral("summary"),
+                     } },
+                 } },
+             }, { QStringLiteral("queries") })),
         tool(QStringLiteral("qmlagent.ui_wait_for"),
              QStringLiteral("Agent-first semantic wait tool. Wait until a selector is found/notFound or one selected node property satisfies a predicate. Use after qmlagent.input_click, qmlagent.input_drag, qmlagent.input_wheel, loaders, popups, Drawer/Menu/Popup/Dialog transitions, and animated controls instead of sleeps, retry loops, screenshots, or frame-count tuning. For Qt Quick Controls popups, wait for generic popup evidence such as type=\"QQuickPopupItem\" or a visible popup property, then query the popup contents; style implementations may expose choices as ItemDelegate rather than MenuItem. If qmlagent.workflow_click_and_wait is not visible in lazy native-tool discovery, use qmlagent.input_click followed by this qmlagent.ui_wait_for tool. Timeout results include targeted nextHints for UI.query/Diagnostics follow-up."),
              schema({

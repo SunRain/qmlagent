@@ -28,6 +28,7 @@ public:
 
     static QJsonObject getTree(const QJsonObject &params);
     static QJsonObject query(const QJsonObject &params);
+    static QJsonObject queryMany(const QJsonObject &params);
     static QJsonObject waitFor(const QJsonObject &params);
     static int waitForBudgetMs(const QJsonObject &params);
     static QJsonObject describeNode(const QJsonObject &params);

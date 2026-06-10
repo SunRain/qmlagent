@@ -1679,6 +1679,30 @@ private:
             *targetParams = queryParams(arguments);
             return true;
         }
+        if (name == QLatin1String("qmlagent.ui_query_many")) {
+            *targetMethod = QStringLiteral("UI.queryMany");
+            const QJsonArray queries = arguments.value(QStringLiteral("queries")).toArray();
+            if (queries.isEmpty()) {
+                *error = QStringLiteral("Provide queries.");
+                return false;
+            }
+            const QJsonObject defaults = arguments.value(QStringLiteral("defaults")).toObject();
+            QJsonArray mappedQueries;
+            for (const QJsonValue &entryValue : queries) {
+                QJsonObject entry = entryValue.toObject();
+                for (auto it = defaults.constBegin(), end = defaults.constEnd(); it != end; ++it) {
+                    if (!entry.contains(it.key()))
+                        entry.insert(it.key(), it.value());
+                }
+                if (entry.value(QStringLiteral("selector")).toString().isEmpty()) {
+                    *error = QStringLiteral("Provide selector in every queries entry or in defaults.");
+                    return false;
+                }
+                mappedQueries.append(queryParams(entry));
+            }
+            *targetParams = { { QStringLiteral("queries"), mappedQueries } };
+            return true;
+        }
         if (name == QLatin1String("qmlagent.ui_wait_for")) {
             *targetMethod = QStringLiteral("UI.waitFor");
             QString selector;
@@ -1981,7 +2005,9 @@ private:
         call->kind = PendingCall::Kind::TargetCommand;
         const bool mapped = mapToolCall(name, arguments, &call->targetMethod, &call->targetParams,
                                         error);
-        if (mapped && call->targetMethod == QLatin1String("UI.query")
+        if (mapped
+                && (call->targetMethod == QLatin1String("UI.query")
+                    || call->targetMethod == QLatin1String("UI.queryMany"))
                 && !arguments.contains(QStringLiteral("verbosity"))) {
             call->verbosity = QStringLiteral("summary");
         }
@@ -2461,6 +2487,10 @@ private:
                 && call.targetMethod == QLatin1String("UI.query")) {
             payload = summarizedQueryResult(payload.toObject());
         }
+        if (!isError && call.verbosity == QLatin1String("summary")
+                && call.targetMethod == QLatin1String("UI.queryMany")) {
+            payload = summarizedQueryManyResult(payload.toObject());
+        }
         writeMessage(jsonResponse(requestId, toolResult(payload, isError)));
     }
 
@@ -2915,6 +2945,10 @@ private:
         if (!isError && m_currentCall->verbosity == QLatin1String("summary")
                 && m_currentCall->targetMethod == QLatin1String("UI.query")) {
             payload = summarizedQueryResult(payload.toObject());
+        }
+        if (!isError && m_currentCall->verbosity == QLatin1String("summary")
+                && m_currentCall->targetMethod == QLatin1String("UI.queryMany")) {
+            payload = summarizedQueryManyResult(payload.toObject());
         }
         writeMessage(jsonResponse(m_currentCall->mcpId, toolResult(payload, isError)));
         m_currentCall.reset();
