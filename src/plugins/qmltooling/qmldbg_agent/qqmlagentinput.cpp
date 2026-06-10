@@ -20,7 +20,10 @@
 #include <QtGui/qwindow.h>
 #include <QtQuick/qquickitem.h>
 #include <QtQuick/qquickwindow.h>
+#include <QtQuick/private/qquickflickable_p.h>
 #include <QtQuickTemplates2/private/qquickcontrol_p.h>
+
+#include <private/qqmldebugservice_p.h>
 
 #include <algorithm>
 
@@ -1374,6 +1377,103 @@ QJsonObject QQmlAgentInput::wheel(const QJsonObject &params)
         { QStringLiteral("settle"), settle },
         { QStringLiteral("postDispatch"), postDispatchTargetState(nodeId, &center) },
     });
+}
+
+QJsonObject QQmlAgentInput::scrollIntoView(const QJsonObject &params)
+{
+    const QQmlAgentUiTree::NodeRef ref = QQmlAgentUiTree::resolveNodeRef(params);
+    if (!ref.issues.isEmpty())
+        return failureWithDiagnostics(ref.failureReason, ref.issues);
+
+    const int nodeId = ref.nodeId;
+    QQuickItem *item = qobject_cast<QQuickItem *>(ref.object);
+    if (!ref.object)
+        return failure(QStringLiteral("node_not_found"), nodeId, { QStringLiteral("node_not_found") });
+    if (!item)
+        return failure(QStringLiteral("not_qquickitem"), nodeId, { QStringLiteral("not_qquickitem") });
+
+    QQuickWindow *window = item->window();
+    if (!window)
+        return failure(QStringLiteral("unknown_window"), nodeId, { QStringLiteral("window=null") });
+
+    // Walk ancestor flickables nearest-first and adjust their content
+    // position so the item's center lands inside each viewport. This is
+    // deterministic navigation for instantiated-but-clipped content; rows a
+    // view has not created yet have no node to resolve, so they still need
+    // wheel scrolling or view-side positioning first.
+    QJsonArray adjustments;
+    const QJsonObject settle = runInputAndSettle(window, params, [&](QElapsedTimer *) {
+        for (QQuickItem *ancestor = item->parentItem(); ancestor;
+                ancestor = ancestor->parentItem()) {
+            QQuickFlickable *flickable = qobject_cast<QQuickFlickable *>(ancestor);
+            if (!flickable || !flickable->contentItem())
+                continue;
+
+            const QPointF itemInContent =
+                    item->mapToItem(flickable->contentItem(), QPointF(0, 0));
+            QJsonObject adjustment{
+                { QStringLiteral("flickableNodeId"),
+                  QQmlDebugService::idForObject(flickable) },
+            };
+
+            // Valid content positions start at origin, not zero: ListView
+            // shifts originY as delegates with estimated sizes come and go,
+            // so clamping to [0, extent] scrolls long dynamic lists wrong.
+            const qreal minY = flickable->originY();
+            const qreal maxY = minY + qMax<qreal>(0, flickable->contentHeight()
+                                                     - flickable->height());
+            if (maxY > minY) {
+                const qreal targetY = qBound<qreal>(
+                        minY,
+                        itemInContent.y() - (flickable->height() - item->height()) / 2,
+                        maxY);
+                adjustment.insert(QStringLiteral("contentYBefore"), flickable->contentY());
+                flickable->setContentY(targetY);
+                adjustment.insert(QStringLiteral("contentYAfter"), flickable->contentY());
+            }
+            const qreal minX = flickable->originX();
+            const qreal maxX = minX + qMax<qreal>(0, flickable->contentWidth()
+                                                     - flickable->width());
+            if (maxX > minX) {
+                const qreal targetX = qBound<qreal>(
+                        minX,
+                        itemInContent.x() - (flickable->width() - item->width()) / 2,
+                        maxX);
+                adjustment.insert(QStringLiteral("contentXBefore"), flickable->contentX());
+                flickable->setContentX(targetX);
+                adjustment.insert(QStringLiteral("contentXAfter"), flickable->contentX());
+            }
+            if (adjustment.size() > 1)
+                adjustments.append(adjustment);
+        }
+    });
+
+    // Final-position evidence measured after settle: snapping views can
+    // revert a programmatic content move, so callers must see where the
+    // item actually ended up rather than trusting the adjustment.
+    bool insideViewportAfter = false;
+    if (item->window()) {
+        const QRectF box = item->mapRectToScene(
+                QRectF(QPointF(0, 0), QSizeF(item->width(), item->height())));
+        const QRectF viewport(QPointF(0, 0), item->window()->size());
+        insideViewportAfter = viewport.intersects(box)
+                && viewport.contains(box.center());
+    }
+
+    QJsonObject result{
+        { QStringLiteral("delivered"), true },
+        { QStringLiteral("scrolled"), !adjustments.isEmpty() },
+        { QStringLiteral("insideViewportAfter"), insideViewportAfter },
+        { QStringLiteral("adjustments"), adjustments },
+        { QStringLiteral("node"), ref.node },
+        { QStringLiteral("settle"), settle },
+        { QStringLiteral("postDispatch"), postDispatchTargetState(nodeId) },
+    };
+    if (adjustments.isEmpty())
+        result.insert(QStringLiteral("reason"), QStringLiteral("no_scrollable_ancestor"));
+    else if (!insideViewportAfter)
+        result.insert(QStringLiteral("reason"), QStringLiteral("target_still_outside_viewport"));
+    return result;
 }
 
 QJsonObject QQmlAgentInput::typeText(const QJsonObject &params)

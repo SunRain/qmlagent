@@ -1835,6 +1835,11 @@ private:
             }
             return true;
         }
+        if (name == QLatin1String("qmlagent.input_scroll_into_view")) {
+            *targetMethod = QStringLiteral("Input.scrollIntoView");
+            *targetParams = nodeRef(arguments, error);
+            return error->isEmpty();
+        }
         if (name == QLatin1String("qmlagent.input_focus")) {
             *targetMethod = QStringLiteral("Input.focusNode");
             *targetParams = nodeRef(arguments, error);

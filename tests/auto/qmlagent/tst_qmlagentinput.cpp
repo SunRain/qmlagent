@@ -17,6 +17,7 @@
 #include <QtCore/qtimer.h>
 #include <QtQuick/qquickitem.h>
 #include <QtQuick/qquickwindow.h>
+#include <QtQuick/private/qquickflickable_p.h>
 #include <QtTest/qtest.h>
 
 QT_USE_NAMESPACE
@@ -41,6 +42,7 @@ private slots:
     void selectorStabilityReflectsTreeUniqueness();
     void queryManyAlignsResultsAndAppliesDefaults();
     void windowObjectIsAddressable();
+    void scrollIntoViewAdjustsAncestorFlickable();
 };
 
 static QJsonObject clickNode(int nodeId)
@@ -459,6 +461,48 @@ void tst_QQmlAgentInput::windowObjectIsAddressable()
     QCOMPARE(matches.at(0).toObject().value(QStringLiteral("properties")).toObject()
                      .value(QStringLiteral("title")).toString(),
              QStringLiteral("Eval Window"));
+}
+
+void tst_QQmlAgentInput::scrollIntoViewAdjustsAncestorFlickable()
+{
+    QQuickWindow window;
+    window.resize(200, 200);
+    QQuickFlickable flickable;
+    flickable.setParentItem(window.contentItem());
+    flickable.setWidth(200);
+    flickable.setHeight(200);
+    flickable.setContentHeight(1000);
+    flickable.setContentWidth(200);
+
+    QQuickItem target;
+    target.setParentItem(flickable.contentItem());
+    target.setObjectName(QStringLiteral("deepItem"));
+    target.setY(900);
+    target.setWidth(100);
+    target.setHeight(40);
+    const int nodeId = QQmlDebugService::idForObject(&target);
+
+    const QJsonObject result = QQmlAgentInput::scrollIntoView(
+            { { QStringLiteral("nodeId"), nodeId } });
+    QVERIFY2(result.value(QStringLiteral("delivered")).toBool(false),
+             qPrintable(QString::fromUtf8(QJsonDocument(result).toJson(QJsonDocument::Compact))));
+    QCOMPARE(result.value(QStringLiteral("scrolled")).toBool(false), true);
+    QVERIFY(flickable.contentY() > 0);
+    // The item's window-relative box must now intersect the viewport.
+    const QPointF inWindow = target.mapToScene(QPointF(0, 0));
+    QVERIFY2(inWindow.y() >= 0 && inWindow.y() < 200,
+             qPrintable(QStringLiteral("y=%1").arg(inWindow.y())));
+
+    // Items with no scrollable ancestor report that honestly.
+    QQuickItem flat;
+    flat.setParentItem(window.contentItem());
+    flat.setWidth(10);
+    flat.setHeight(10);
+    const QJsonObject noScroll = QQmlAgentInput::scrollIntoView(
+            { { QStringLiteral("nodeId"), QQmlDebugService::idForObject(&flat) } });
+    QCOMPARE(noScroll.value(QStringLiteral("scrolled")).toBool(true), false);
+    QCOMPARE(noScroll.value(QStringLiteral("reason")).toString(),
+             QStringLiteral("no_scrollable_ancestor"));
 }
 
 QTEST_MAIN(tst_QQmlAgentInput)

@@ -78,6 +78,7 @@ static const QStringList &agentMethods()
         QStringLiteral("Input.clickNode"),
         QStringLiteral("Input.longPressNode"),
         QStringLiteral("Input.wheel"),
+        QStringLiteral("Input.scrollIntoView"),
         QStringLiteral("Input.focusNode"),
         QStringLiteral("Input.dispatchMouseEvent"),
         QStringLiteral("Input.dragNode"),
@@ -358,6 +359,9 @@ QJsonObject QQmlAgentService::dispatch(const QString &method, const QJsonObject 
                                        dispatchTimeoutMs);
     if (method == QLatin1String("Input.wheel"))
         return runOnGuiThreadBlocking([params]() { return QQmlAgentInput::wheel(params); },
+                                       dispatchTimeoutMs);
+    if (method == QLatin1String("Input.scrollIntoView"))
+        return runOnGuiThreadBlocking([params]() { return QQmlAgentInput::scrollIntoView(params); },
                                        dispatchTimeoutMs);
     if (method == QLatin1String("Input.focusNode"))
         return runOnGuiThreadBlocking([params]() { return QQmlAgentInput::focusNode(params); },
