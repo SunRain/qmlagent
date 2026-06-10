@@ -587,9 +587,27 @@ static bool keyFromParams(const QJsonObject &params, int *key,
         return true;
     }
 
-    const QString keyText = params.value(QStringLiteral("key")).toString();
+    QString keyText = params.value(QStringLiteral("key")).toString();
     if (keyText.isEmpty())
         return false;
+
+    // Agents write common key names interchangeably with QKeySequence's
+    // portable names; accept the obvious aliases instead of refusing.
+    static const QHash<QString, QString> keyAliases{
+        { QStringLiteral("escape"), QStringLiteral("Esc") },
+        { QStringLiteral("delete"), QStringLiteral("Del") },
+        { QStringLiteral("insert"), QStringLiteral("Ins") },
+        { QStringLiteral("pageup"), QStringLiteral("PgUp") },
+        { QStringLiteral("pagedown"), QStringLiteral("PgDown") },
+        { QStringLiteral("page up"), QStringLiteral("PgUp") },
+        { QStringLiteral("page down"), QStringLiteral("PgDown") },
+        { QStringLiteral("return"), QStringLiteral("Return") },
+        { QStringLiteral("enter"), QStringLiteral("Enter") },
+        { QStringLiteral("spacebar"), QStringLiteral("Space") },
+    };
+    const QString alias = keyAliases.value(keyText.toLower());
+    if (!alias.isEmpty())
+        keyText = alias;
 
     const QKeySequence sequence = QKeySequence::fromString(keyText, QKeySequence::PortableText);
     if (sequence.isEmpty())
@@ -1451,6 +1469,7 @@ QJsonObject QQmlAgentInput::typeText(const QJsonObject &params)
     int unitsSent = 0;
     QJsonObject replacement;
     bool movedCursorToEnd = false;
+    QString targetKind;
     QPointer<QQuickWindow> guardedWindow(window);
     const QJsonObject settle = runInputAndSettle(window, params, [&](QElapsedTimer *) {
         if (!guardedWindow)
@@ -1460,6 +1479,12 @@ QJsonObject QQmlAgentInput::typeText(const QJsonObject &params)
                 ? static_cast<QObject *>(activeFocusItem)
                 : targetKeyItem ? static_cast<QObject *>(targetKeyItem)
                                 : static_cast<QObject *>(guardedWindow.data());
+        if (keyTarget == static_cast<QObject *>(guardedWindow.data()))
+            targetKind = QStringLiteral("window");
+        else if (isEditableTextObject(keyTarget))
+            targetKind = QStringLiteral("editableItem");
+        else
+            targetKind = QStringLiteral("item");
         QPointer<QObject> guardedKeyTarget(keyTarget);
         if (replaceExisting) {
             QObject *selectionTarget = activeFocusItem ? static_cast<QObject *>(activeFocusItem)
@@ -1524,6 +1549,19 @@ QJsonObject QQmlAgentInput::typeText(const QJsonObject &params)
         { QStringLiteral("mode"), QQmlAgentInputDriver::mode() },
         { QStringLiteral("settle"), settle },
     };
+    if (!targetKind.isEmpty())
+        result.insert(QStringLiteral("targetKind"), targetKind);
+    if (targetKind == QLatin1String("window")) {
+        // Keys went to the window because no editable target was resolved;
+        // delivery is honest but proves nothing about any text field.
+        result.insert(QStringLiteral("diagnostics"), QJsonArray{ QJsonObject{
+            { QStringLiteral("id"), QStringLiteral("input.window_fallback") },
+            { QStringLiteral("severity"), QStringLiteral("warning") },
+            { QStringLiteral("confidence"), 1.0 },
+            { QStringLiteral("message"),
+              QStringLiteral("No editable target received the key events; they were delivered to the window. Target a text item or verify the text state explicitly.") },
+        } });
+    }
     if (targetItem)
         result.insert(QStringLiteral("deliveryWindow"), deliveryWindowEvidence(targetItem));
     if (targetNodeId > 0)
@@ -1617,7 +1655,8 @@ QJsonObject QQmlAgentInput::dispatchKeyEvent(const QJsonObject &params)
     QString text;
     if (!keyFromParams(params, &key, &modifiers, &text)) {
         return keyFailure(QStringLiteral("invalid_key"),
-                          { QStringLiteral("provide keyCode or a QKeySequence-compatible key") });
+                          { QStringLiteral("provide keyCode or a QKeySequence-compatible key"),
+                            QStringLiteral("common aliases are accepted: Escape, Delete, Insert, PageUp, PageDown, Enter, Spacebar") });
     }
 
     const QString type = params.value(QStringLiteral("type")).toString(QStringLiteral("keyClick"));
