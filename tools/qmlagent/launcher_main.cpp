@@ -500,6 +500,13 @@ public:
     {
         connect(&m_mailboxWatcher, &QFileSystemWatcher::directoryChanged, this,
                 &LauncherControlServer::processMailboxRequests);
+        // The macOS directory watcher delivers with a fixed ~500ms latency,
+        // which becomes the per-command floor for every qmlagentctl and MCP
+        // request. A fast poll over the small private mailbox keeps command
+        // latency in the low milliseconds; the watcher remains as backstop.
+        m_mailboxPollTimer.setInterval(10);
+        connect(&m_mailboxPollTimer, &QTimer::timeout, this,
+                &LauncherControlServer::processMailboxRequests);
         connect(m_agentClient, &QmlAgentClient::received, this,
                 &LauncherControlServer::handleAgentMessage);
     }
@@ -509,6 +516,7 @@ public:
         if (!ensurePrivateDirectory(m_controlMailboxDir, error))
             return false;
         m_mailboxWatcher.addPath(m_controlMailboxDir);
+        m_mailboxPollTimer.start();
         return true;
     }
 
@@ -785,6 +793,7 @@ private:
     QProcess *m_target = nullptr;
     QmlAgentClient *m_agentClient = nullptr;
     QFileSystemWatcher m_mailboxWatcher;
+    QTimer m_mailboxPollTimer;
     QHash<int, PendingAgentRequest> m_pendingAgentRequests;
     int m_nextTargetRequestId = 1000;
     bool m_sessionReady = false;
