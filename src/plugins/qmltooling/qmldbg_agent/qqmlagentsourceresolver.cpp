@@ -731,6 +731,31 @@ QJsonObject QQmlAgentSourceResolver::sourceLocationForObject(const QObject *obje
     return unknownLocation();
 }
 
+// The single ranked "edit here" answer (F-016): primary is the precise
+// assignment/binding location when one exists with confidence; otherwise
+// the object declaration, explicitly downgraded so callers can tell the
+// difference without knowing the dossier's precedence rules.
+static QJsonObject assignmentSite(const QJsonObject &primary,
+                                  const QJsonObject &objectLocation,
+                                  const QString &primaryMethod)
+{
+    const bool primaryUsable =
+            primary.value(QStringLiteral("confidence")).toDouble() > 0.0
+            && !primary.value(QStringLiteral("file")).toString().isEmpty();
+    QJsonObject site{
+        { QStringLiteral("sourceLocation"),
+          primaryUsable ? primary : objectLocation },
+        { QStringLiteral("method"),
+          primaryUsable ? primaryMethod : QStringLiteral("objectDeclaration") },
+    };
+    if (!primaryUsable) {
+        site.insert(QStringLiteral("note"),
+                    QStringLiteral("no per-property location available; this is "
+                                   "the object declaration, not the assignment"));
+    }
+    return site;
+}
+
 QJsonObject QQmlAgentSourceResolver::bindingProvenanceForProperty(QObject *object,
                                                                   const QString &propertyName)
 {
@@ -795,17 +820,25 @@ QJsonObject QQmlAgentSourceResolver::bindingProvenanceForProperty(QObject *objec
         });
 
         const PropertySourceSnippet snippet = propertySourceSnippet(objectLocation, propertyName, objectLine);
+        QJsonObject assignmentLocation;
         if (!snippet.expression.isEmpty()) {
             insertCandidateIdentifiers(&provenance, snippet.expression);
+            assignmentLocation = makeLocation(
+                    objectLocation.value(QStringLiteral("file")).toString(),
+                    snippet.line, snippet.column, snippet.method, snippet.confidence,
+                    snippet.limitations);
             provenance.insert(QStringLiteral("sourceAssignment"), QJsonObject{
                 { QStringLiteral("expression"), snippet.expression },
-                { QStringLiteral("sourceLocation"),
-                  makeLocation(objectLocation.value(QStringLiteral("file")).toString(),
-                               snippet.line, snippet.column, snippet.method, snippet.confidence,
-                               snippet.limitations) },
+                { QStringLiteral("sourceLocation"), assignmentLocation },
             });
         }
         result.insert(QStringLiteral("provenance"), provenance);
+        // Agent-first ranked answer: the caller's question is "which line
+        // do I edit to change this value". The dossier above remains for
+        // verification; this field applies the precedence for them.
+        result.insert(QStringLiteral("assignmentSite"),
+                      assignmentSite(assignmentLocation, objectLocation,
+                                     QStringLiteral("sourceAssignment")));
         return result;
     }
 
@@ -879,6 +912,11 @@ QJsonObject QQmlAgentSourceResolver::bindingProvenanceForProperty(QObject *objec
     }
 
     result.insert(QStringLiteral("provenance"), provenance);
+    const QJsonObject bestBindingLocation =
+            provenance.value(QStringLiteral("sourceLocation")).toObject();
+    result.insert(QStringLiteral("assignmentSite"),
+                  assignmentSite(bestBindingLocation, objectLocation,
+                                 QStringLiteral("bindingLocation")));
     return result;
 }
 

@@ -245,7 +245,7 @@ QJsonArray toolList()
              QStringLiteral("Analyze one node by selector or nodeId and return evidence-backed issues."),
              schema(withNodeRef({ { QStringLiteral("checks"), stringArray } }))),
         tool(QStringLiteral("qmlagent.diagnostics_analyze_binding"),
-             QStringLiteral("Resolve runtime binding provenance for one property. Use this when geometry/state looks computed: it reports active QQmlBinding or Qt bindable-property binding evidence, current value, source location, bounded source snippet, candidate identifier follow-up hints, currently captured dependency values when Qt exposes them, and bindable-property dependency summaries when values are not exposed. Source-token identifiers are hints, not dependency proof. This is structured repair evidence; it does not mutate the app."),
+             QStringLiteral("Resolve runtime binding provenance for one property. Use this when geometry/state looks computed: it reports active QQmlBinding or Qt bindable-property binding evidence, current value, source location, bounded source snippet, candidate identifier follow-up hints, currently captured dependency values when Qt exposes them, and bindable-property dependency summaries when values are not exposed. Start from result.assignmentSite: it is the ranked answer to \"which file:line do I edit to change this value\" for both live bindings and literal assignments; the provenance dossier is for verification. Source-token identifiers are hints, not dependency proof. This is structured repair evidence; it does not mutate the app."),
              schema(withNodeRef({
                  { QStringLiteral("property"), QJsonObject{
                      { QStringLiteral("type"), QStringLiteral("string") },
