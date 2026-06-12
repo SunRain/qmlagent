@@ -80,7 +80,9 @@ static QString actionabilityFailureMessage(const QString &reason)
     if (reason == QLatin1String("center_outside_viewport"))
         return QStringLiteral("Node center is outside the viewport.");
     if (reason == QLatin1String("blocked_by_item"))
-        return QStringLiteral("Requested input point is covered by another visible item.");
+        return QStringLiteral("Requested input point is covered by another visible item. "
+                              "If the blockingItem in evidence is interactive and belongs "
+                              "to the same control, click that item directly.");
     if (reason == QLatin1String("blocked_by_modal_popup"))
         return QStringLiteral("Node is blocked by a visible modal popup.");
     return {};

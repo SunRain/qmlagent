@@ -1597,6 +1597,43 @@ QJsonObject QQmlAgentUiTree::query(const QJsonObject &params)
             excludedStyleMatches = QJsonArray();
     }
 
+    // A control and its internal label layers share the same text
+    // (MenuItem -> IconLabel -> MnemonicLabel): when every match sits on
+    // one ancestor chain, the matches are one control described three
+    // times, not three candidates. Resolve to the outermost match — the
+    // control is what a caller addresses and what input should target.
+    if (matches.size() > 1) {
+        QList<QQuickItem *> matchItems;
+        bool allItems = true;
+        for (const QJsonValue &match : std::as_const(matches)) {
+            QQuickItem *item = qobject_cast<QQuickItem *>(
+                    objectForNodeId(match.toObject().value(QStringLiteral("nodeId")).toInt(-1)));
+            if (!item) {
+                allItems = false;
+                break;
+            }
+            matchItems.append(item);
+        }
+        if (allItems) {
+            int outermost = 0;
+            bool singleChain = true;
+            for (int i = 1; i < matchItems.size() && singleChain; ++i) {
+                if (matchItems.at(i)->isAncestorOf(matchItems.at(outermost)))
+                    outermost = i;
+                else if (!matchItems.at(outermost)->isAncestorOf(matchItems.at(i)))
+                    singleChain = false;
+            }
+            if (singleChain) {
+                for (int i = 0; i < matchItems.size() && singleChain; ++i) {
+                    singleChain = i == outermost
+                            || matchItems.at(outermost)->isAncestorOf(matchItems.at(i));
+                }
+            }
+            if (singleChain)
+                matches = QJsonArray{ matches.at(outermost) };
+        }
+    }
+
     QJsonArray diagnostics;
     if (matches.isEmpty()) {
         QJsonArray treeFields{
