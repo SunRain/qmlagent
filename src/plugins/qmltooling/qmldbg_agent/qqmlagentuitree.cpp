@@ -228,7 +228,18 @@ struct SelectorUniquenessIndex
 {
     QHash<QString, int> idCounts;
     QHash<QString, int> objectNameCounts;
+    // Source-location selectors for nodes that carry no id/objectName. A
+    // one-off authored node has a unique location (a usable medium-stability
+    // handle); delegate instances share one line, so the location alone is
+    // ambiguous and needs an index/row/column qualifier.
+    QHash<QString, int> sourceLocationCounts;
 };
+
+static QString sourceLocationSelectorForObject(QObject *object)
+{
+    return sourceLocationSelectorValue(
+            QQmlAgentSourceResolver::sourceLocationForObject(object));
+}
 
 // QML ids are only unique per component scope and objectName is not enforced
 // at all, so a "high" stability claim must be backed by uniqueness in the
@@ -259,6 +270,11 @@ static SelectorUniquenessIndex buildSelectorUniquenessIndex()
                 ++index.idCounts[qmlId];
             if (!item->objectName().isEmpty())
                 ++index.objectNameCounts[item->objectName()];
+            if (qmlId.isEmpty() && item->objectName().isEmpty()) {
+                const QString sourceSelector = sourceLocationSelectorForObject(item);
+                if (!sourceSelector.isEmpty())
+                    ++index.sourceLocationCounts[sourceSelector];
+            }
             const QList<QQuickItem *> children = item->childItems();
             for (QQuickItem *child : children)
                 stack.append(child);
@@ -762,18 +778,35 @@ static QJsonObject nodeForObjectInternal(QObject *object, int windowId, int dept
     selectors.append(selector(QStringLiteral("visualPath"), nodeVisualPath, QStringLiteral("low"),
                               QStringLiteral("depends on visual sibling order")));
 
+    // A node with no id and no objectName has only the session-local nodeId
+    // as a cross-call handle, which is exactly what agents are told to avoid.
+    // Its authored source location is a durable selector — compute it even
+    // without includeSource so anonymous nodes are addressable (F-013/F-016).
+    const bool anonymous = qmlId.isEmpty() && object->objectName().isEmpty();
     QJsonObject sourceLocation;
-    if (options.includeSource || !qmlId.isEmpty())
+    if (options.includeSource || !qmlId.isEmpty() || anonymous)
         sourceLocation = QQmlAgentSourceResolver::sourceLocationForObject(object);
 
-    if (options.includeSource) {
+    if (options.includeSource)
         insertField(&node, options, QStringLiteral("sourceLocation"), sourceLocation);
 
+    if (options.includeSource || anonymous) {
         const QString sourceSelector = sourceLocationSelectorValue(sourceLocation);
         if (!sourceSelector.isEmpty()) {
-            selectors.append(selector(QStringLiteral("sourceLocation"), sourceSelector,
-                                      QStringLiteral("medium"),
-                                      QStringLiteral("line and column confidence depends on source metadata")));
+            const int sourceCount =
+                    options.uniqueness.sourceLocationCounts.value(sourceSelector, 1);
+            if (sourceCount <= 1) {
+                selectors.append(selector(QStringLiteral("sourceLocation"), sourceSelector,
+                                          QStringLiteral("medium"),
+                                          QStringLiteral("authored source location; line/column confidence depends on source metadata")));
+            } else {
+                // Repeated location: delegate instances share one line, so it
+                // is only unique together with the delegate index/row/column
+                // appended by the delegate-context pass.
+                selectors.append(selector(QStringLiteral("sourceLocation"), sourceSelector,
+                                          QStringLiteral("low"),
+                                          QStringLiteral("source location repeats across delegate instances; add index/row/column to disambiguate")));
+            }
         }
     }
     if (options.includeSource && isLikelyFrameworkInternal(qmlId, object->objectName(), sourceLocation))
