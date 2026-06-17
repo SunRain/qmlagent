@@ -235,10 +235,28 @@ struct SelectorUniquenessIndex
     QHash<QString, int> sourceLocationCounts;
 };
 
+// A source location is a usable selector only when it is app-authored and
+// line-precise. Framework style/template QML (qrc:/qt-project.org, QtQuick
+// Controls/Templates) is instantiated once per control, so its lines repeat
+// and point into Qt's own sources — never a handle an agent wants. A
+// location with no line is not precise enough to disambiguate either.
+static bool sourceLocationIsAddressable(const QJsonObject &location)
+{
+    const QString file = location.value(QStringLiteral("file")).toString();
+    if (file.isEmpty() || location.value(QStringLiteral("line")).toInt(-1) <= 0)
+        return false;
+    return !file.startsWith(QLatin1String("qrc:/qt-project.org/"))
+            && !file.contains(QLatin1String("/QtQuick/Controls/"))
+            && !file.contains(QLatin1String("/QtQuick/Templates/"));
+}
+
 static QString sourceLocationSelectorForObject(QObject *object)
 {
-    return sourceLocationSelectorValue(
-            QQmlAgentSourceResolver::sourceLocationForObject(object));
+    const QJsonObject location =
+            QQmlAgentSourceResolver::sourceLocationForObject(object);
+    if (!sourceLocationIsAddressable(location))
+        return {};
+    return sourceLocationSelectorValue(location);
 }
 
 // QML ids are only unique per component scope and objectName is not enforced
@@ -790,7 +808,8 @@ static QJsonObject nodeForObjectInternal(QObject *object, int windowId, int dept
     if (options.includeSource)
         insertField(&node, options, QStringLiteral("sourceLocation"), sourceLocation);
 
-    if (options.includeSource || anonymous) {
+    if ((options.includeSource || anonymous)
+            && sourceLocationIsAddressable(sourceLocation)) {
         const QString sourceSelector = sourceLocationSelectorValue(sourceLocation);
         if (!sourceSelector.isEmpty()) {
             const int sourceCount =
