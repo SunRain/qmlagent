@@ -134,6 +134,11 @@ base64 does not enter the agent context. For MCP screenshot bytes, pass
   `qmlagent.input_scroll_into_view` or shell `qmlagentctl scroll-into-view`,
   then retry the action/query. For not-yet-instantiated virtualized rows,
   wheel toward the row and re-query first.
+- If a popup blocks input or a click reports `blocked_by_modal_popup`, and
+  Escape or a dismiss button is unreliable, use `qmlagent.input_dismiss_popup`
+  (or shell `qmlagentctl dismiss-popup`, `--all` for stacked popups). It
+  reports `remainingPopupCount` so you can confirm the popup actually closed.
+  Note menus and dialogs toggle: re-clicking the trigger while open closes it.
 - To enter new text into an occupied field, use native `qmlagent.input_clear_text` followed by
   `qmlagent.input_type_text`, or shell `qmlagentctl clear-text` followed by
   `qmlagentctl type`, then verify with `UI.query` or `UI.waitFor`.

@@ -22,6 +22,8 @@
 #include <QtQuick/qquickwindow.h>
 #include <QtQuick/private/qquickflickable_p.h>
 #include <QtQuickTemplates2/private/qquickcontrol_p.h>
+#include <QtQuickTemplates2/private/qquickoverlay_p.h>
+#include <QtQuickTemplates2/private/qquickpopup_p.h>
 
 #include <private/qqmldebugservice_p.h>
 
@@ -1866,6 +1868,114 @@ QJsonObject QQmlAgentInput::dispatchKeyEvent(const QJsonObject &params)
     });
     if (!focusResult.isEmpty())
         result.insert(QStringLiteral("focus"), focusResult);
+    return result;
+}
+
+static QList<QQuickPopup *> visiblePopupsInScene()
+{
+    // Overlay children are stacked low-to-high z, so the scene's topmost
+    // popup is last. Collected across every window's overlay.
+    QList<QQuickPopup *> popups;
+    const QWindowList windows = QGuiApplication::allWindows();
+    for (QWindow *window : windows) {
+        QQuickWindow *quickWindow = qobject_cast<QQuickWindow *>(window);
+        if (!quickWindow || !quickWindow->contentItem())
+            continue;
+        QVector<QQuickItem *> stack{ quickWindow->contentItem() };
+        QSet<QQuickItem *> seen;
+        while (!stack.isEmpty()) {
+            QQuickItem *item = stack.takeLast();
+            if (!item || seen.contains(item))
+                continue;
+            seen.insert(item);
+            if (QQuickOverlay *overlay = qobject_cast<QQuickOverlay *>(item)) {
+                const QList<QQuickItem *> children = overlay->childItems();
+                for (QQuickItem *child : children) {
+                    QQuickPopup *popup = qobject_cast<QQuickPopup *>(child->parent());
+                    if (popup && popup->isVisible() && !popups.contains(popup))
+                        popups.append(popup);
+                }
+            }
+            const QList<QQuickItem *> children = item->childItems();
+            for (QQuickItem *child : children)
+                stack.append(child);
+        }
+    }
+    return popups;
+}
+
+static QJsonObject popupEvidence(QQuickPopup *popup)
+{
+    QJsonObject info{
+        { QStringLiteral("type"),
+          QString::fromUtf8(popup->metaObject()->className()) },
+        { QStringLiteral("modal"), popup->isModal() },
+    };
+    if (!popup->objectName().isEmpty())
+        info.insert(QStringLiteral("objectName"), popup->objectName());
+    return info;
+}
+
+QJsonObject QQmlAgentInput::dismissPopup(const QJsonObject &params)
+{
+    // F-011: a generic, evidence-backed dismissal route. Esc is not honored
+    // by every popup and dismiss buttons are app-specific, so a wedged modal
+    // can block all further input. close() is programmatic and honors the
+    // popup regardless of closePolicy; the result reports whether the scene's
+    // visible-popup count actually dropped, not merely that a key was sent.
+    const bool all = params.value(QStringLiteral("all")).toBool(false);
+    const QList<QQuickPopup *> before = visiblePopupsInScene();
+    if (before.isEmpty()) {
+        return {
+            { QStringLiteral("dismissed"), false },
+            { QStringLiteral("reason"), QStringLiteral("no_visible_popup") },
+            { QStringLiteral("popupCount"), 0 },
+        };
+    }
+
+    QList<QQuickPopup *> targets;
+    if (all) {
+        for (auto it = before.crbegin(); it != before.crend(); ++it)
+            targets.append(*it);
+    } else {
+        targets.append(before.last());
+    }
+
+    QJsonArray dismissed;
+    for (QQuickPopup *popup : targets) {
+        dismissed.append(popupEvidence(popup));
+        popup->close();
+    }
+
+    // Let exit transitions settle so the count reflects closed popups, not
+    // ones mid-animation. Bounded; the service budget covers it.
+    QElapsedTimer timer;
+    timer.start();
+    const int settleMs = 350;
+    while (timer.elapsed() < settleMs) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 16);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    }
+
+    const int remaining = visiblePopupsInScene().size();
+    QJsonObject result{
+        { QStringLiteral("dismissed"), remaining < before.size() },
+        { QStringLiteral("dismissedCount"), dismissed.size() },
+        { QStringLiteral("popups"), dismissed },
+        { QStringLiteral("popupCountBefore"), int(before.size()) },
+        { QStringLiteral("remainingPopupCount"), remaining },
+        { QStringLiteral("method"), QStringLiteral("popup-close") },
+    };
+    if (remaining >= before.size()) {
+        result.insert(QStringLiteral("diagnostics"), QJsonArray{ QJsonObject{
+            { QStringLiteral("id"), QStringLiteral("popup.not_dismissed") },
+            { QStringLiteral("severity"), QStringLiteral("warning") },
+            { QStringLiteral("message"),
+              QStringLiteral("close() did not reduce the visible popup count; "
+                             "the popup may reopen from a binding or be a "
+                             "non-Popup overlay.") },
+        } });
+    }
     return result;
 }
 

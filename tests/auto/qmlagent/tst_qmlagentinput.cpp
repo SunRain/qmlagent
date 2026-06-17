@@ -43,6 +43,7 @@ private slots:
     void queryManyAlignsResultsAndAppliesDefaults();
     void windowObjectIsAddressable();
     void scrollIntoViewAdjustsAncestorFlickable();
+    void dismissPopupReportsNoVisiblePopup();
 };
 
 static QJsonObject clickNode(int nodeId)
@@ -527,6 +528,21 @@ void tst_QQmlAgentInput::scrollIntoViewAdjustsAncestorFlickable()
     QCOMPARE(noScroll.value(QStringLiteral("scrolled")).toBool(true), false);
     QCOMPARE(noScroll.value(QStringLiteral("reason")).toString(),
              QStringLiteral("no_scrollable_ancestor"));
+}
+
+void tst_QQmlAgentInput::dismissPopupReportsNoVisiblePopup()
+{
+    // With no popup in the scene the route reports that honestly rather than
+    // claiming a dismissal. (Closing behaviour is covered by live corpus
+    // verification, since a working QQuickPopup needs an ApplicationWindow
+    // overlay this fixture does not build.)
+    QQuickWindow window;
+    window.resize(100, 100);
+    const QJsonObject result = QQmlAgentInput::dismissPopup({});
+    QCOMPARE(result.value(QStringLiteral("dismissed")).toBool(true), false);
+    QCOMPARE(result.value(QStringLiteral("reason")).toString(),
+             QStringLiteral("no_visible_popup"));
+    QCOMPARE(result.value(QStringLiteral("popupCount")).toInt(-1), 0);
 }
 
 QTEST_MAIN(tst_QQmlAgentInput)

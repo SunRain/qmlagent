@@ -85,6 +85,7 @@ static const QStringList &agentMethods()
         QStringLiteral("Input.dispatchTouchEvent"),
         QStringLiteral("Input.dispatchKeyEvent"),
         QStringLiteral("Input.typeText"),
+        QStringLiteral("Input.dismissPopup"),
         QStringLiteral("Render.captureScreenshot"),
         QStringLiteral("Runtime.setProperty"),
         QStringLiteral("Runtime.invokeMethod"),
@@ -380,6 +381,9 @@ QJsonObject QQmlAgentService::dispatch(const QString &method, const QJsonObject 
                                        dispatchTimeoutMs);
     if (method == QLatin1String("Input.typeText"))
         return runOnGuiThreadBlocking([params]() { return QQmlAgentInput::typeText(params); },
+                                       dispatchTimeoutMs);
+    if (method == QLatin1String("Input.dismissPopup"))
+        return runOnGuiThreadBlocking([params]() { return QQmlAgentInput::dismissPopup(params); },
                                        dispatchTimeoutMs);
     if (method == QLatin1String("Render.captureScreenshot"))
         return runOnGuiThreadBlocking([params]() { return QQmlAgentRender::captureScreenshot(params); });

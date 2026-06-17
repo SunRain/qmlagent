@@ -218,6 +218,8 @@ Use `qmlagentctl` when MCP is unavailable or a shell command is simpler:
 "$QT_BIN/qmlagentctl" long-press 'id="contextButton"' --hold-ms 900
 "$QT_BIN/qmlagentctl" clear-text 'id="urlField"'
 "$QT_BIN/qmlagentctl" type 'id="urlField"' --text 'https://qt.io'
+"$QT_BIN/qmlagentctl" dismiss-popup
+"$QT_BIN/qmlagentctl" dismiss-popup --all
 "$QT_BIN/qmlagentctl" binding 'id="saveButton"' --property y --format compact
 "$QT_BIN/qmlagentctl" screenshot --out fallback.png --scale 0.5
 "$QT_BIN/qmlagentctl" stop

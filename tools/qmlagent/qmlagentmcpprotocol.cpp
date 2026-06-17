@@ -400,6 +400,9 @@ QJsonArray toolList()
         tool(QStringLiteral("qmlagent.input_clear_text"),
              QStringLiteral("Clear a TextInput/TextField/TextArea-style target through the same Input.typeText path: focus target, select existing text when available, then delete through Qt key input. Use qmlagent.input_type_text afterward to enter new text, and verify final text/state with qmlagent.ui_query or qmlagent.ui_wait_for."),
              schema(withNodeRef({}))),
+        tool(QStringLiteral("qmlagent.input_dismiss_popup"),
+             QStringLiteral("Close the topmost visible popup (Menu/Dialog/Drawer/Popup) generically when Esc or a dismiss button is not reliable, unblocking further input. Pass all=true to close every stacked popup. The result reports popupCountBefore/remainingPopupCount so you can confirm the popup actually closed; a popup.not_dismissed diagnostic means it survived (reopened from a binding, or a non-Popup overlay). Verify follow-up state with qmlagent.ui_query or qmlagent.ui_wait_for."),
+             schema({ { QStringLiteral("all"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("boolean") } } } })),
         tool(QStringLiteral("qmlagent.workflow_click"),
              QStringLiteral("Click a target selector and verify an immediate expected state in one dispatcher-owned workflow report. Use verbosity=\"summary\" for normal agent loops; use full only when deep evidence is needed. For Drawer/Menu/Popup/Dialog transitions, loaders, animated controls, or delayed availability, use qmlagent.workflow_click_and_wait instead of this qmlagent.workflow_click tool."),
              schema({

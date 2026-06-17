@@ -23,6 +23,7 @@ public:
     static QJsonObject dispatchTouchEvent(const QJsonObject &params);
     static QJsonObject dispatchKeyEvent(const QJsonObject &params);
     static QJsonObject typeText(const QJsonObject &params);
+    static QJsonObject dismissPopup(const QJsonObject &params);
 };
 
 QT_END_NAMESPACE

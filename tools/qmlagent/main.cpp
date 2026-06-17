@@ -1044,6 +1044,7 @@ static int runCtlSubcommand(const QStringList &arguments)
                 << "  qmlagentctl long-press <selector> [--hold-ms ms]\n"
                 << "  qmlagentctl type <selector> --text value\n"
                 << "  qmlagentctl clear-text <selector>\n"
+                << "  qmlagentctl dismiss-popup [--all]\n"
                 << "  qmlagentctl wait <selector> --state found|notFound [--timeout ms]\n"
                 << "  qmlagentctl screenshot [--window-id n] [--scale 0.5] [--region x,y,w,h] [--include-data] [--out file.png]\n"
                 << "  qmlagentctl reload-preview\n"
@@ -1099,6 +1100,7 @@ static int runCtlSubcommand(const QStringList &arguments)
         QStringLiteral("long-press"),
         QStringLiteral("type"),
         QStringLiteral("clear-text"),
+        QStringLiteral("dismiss-popup"),
         QStringLiteral("wait"),
         QStringLiteral("screenshot"),
     };
@@ -1239,6 +1241,10 @@ static int runCtlSubcommand(const QStringList &arguments)
                 { QStringLiteral("text"), QString() },
                 { QStringLiteral("replaceExisting"), true },
             };
+        } else if (command == QLatin1String("dismiss-popup")) {
+            method = QStringLiteral("Input.dismissPopup");
+            if (arguments.contains(QStringLiteral("--all")))
+                params = { { QStringLiteral("all"), true } };
         } else if (command == QLatin1String("wait")) {
             if (arguments.size() < 3)
                 return fail(QStringLiteral("qmlagentctl wait requires a selector."));
@@ -1997,6 +2003,14 @@ private:
                 return false;
             for (auto it = ref.constBegin(), end = ref.constEnd(); it != end; ++it)
                 targetParams->insert(it.key(), it.value());
+            return true;
+        }
+        if (name == QLatin1String("qmlagent.input_dismiss_popup")) {
+            *targetMethod = QStringLiteral("Input.dismissPopup");
+            *targetParams = {};
+            if (arguments.contains(QStringLiteral("all")))
+                targetParams->insert(QStringLiteral("all"),
+                                     arguments.value(QStringLiteral("all")));
             return true;
         }
         if (name == QLatin1String("qmlagent.runtime_set_property")) {
