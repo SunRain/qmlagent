@@ -288,11 +288,14 @@ static SelectorUniquenessIndex buildSelectorUniquenessIndex()
                 ++index.idCounts[qmlId];
             if (!item->objectName().isEmpty())
                 ++index.objectNameCounts[item->objectName()];
-            if (qmlId.isEmpty() && item->objectName().isEmpty()) {
-                const QString sourceSelector = sourceLocationSelectorForObject(item);
-                if (!sourceSelector.isEmpty())
-                    ++index.sourceLocationCounts[sourceSelector];
-            }
+            // Count over every item, not just anonymous ones: a delegate
+            // line repeats across instances whether or not the delegate has
+            // a (delegate-local, non-unique) id, and includeSource offers
+            // the source selector on those too. Counting only anonymous
+            // items would leave the repeated location looking unique.
+            const QString sourceSelector = sourceLocationSelectorForObject(item);
+            if (!sourceSelector.isEmpty())
+                ++index.sourceLocationCounts[sourceSelector];
             const QList<QQuickItem *> children = item->childItems();
             for (QQuickItem *child : children)
                 stack.append(child);
