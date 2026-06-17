@@ -571,6 +571,21 @@ static void downgradeDelegateLocalSelectors(QJsonObject *node)
         node->insert(QStringLiteral("selectors"), selectors);
 }
 
+static QString delegateSourceSelectorValue(const QJsonObject &node)
+{
+    // The source-location selector the per-node pass attached to an
+    // anonymous delegate node (marked "low" because the line repeats across
+    // instances): unique once an index/cell qualifier is added.
+    for (const QJsonValue &value : node.value(QStringLiteral("selectors")).toArray()) {
+        const QJsonObject entry = value.toObject();
+        if (entry.value(QStringLiteral("kind")).toString()
+                == QLatin1String("sourceLocation")) {
+            return entry.value(QStringLiteral("value")).toString();
+        }
+    }
+    return {};
+}
+
 static QJsonObject applyDelegateContext(QJsonObject node, int delegateIndex,
                                         const QString &indexSource)
 {
@@ -592,6 +607,21 @@ static QJsonObject applyDelegateContext(QJsonObject node, int delegateIndex,
                 QStringLiteral("medium"),
                 QStringLiteral("index changes when model order changes")));
         node.insert(QStringLiteral("selectors"), selectors);
+    } else if (stableIdKind.isEmpty()
+               && delegateIndexSourceSupportsSelector(indexSource)) {
+        // Anonymous delegate: anchor the indexed selector on the source
+        // location instead of an id (Phase 2 of the addressability work).
+        const QString sourceValue = delegateSourceSelectorValue(node);
+        if (!sourceValue.isEmpty()) {
+            QJsonArray selectors = node.value(QStringLiteral("selectors")).toArray();
+            selectors.append(selector(
+                    QStringLiteral("sourceLocation+index"),
+                    QStringLiteral("sourceLocation=\"%1\" index=%2")
+                            .arg(sourceValue).arg(delegateIndex),
+                    QStringLiteral("medium"),
+                    QStringLiteral("anonymous delegate; index changes when model order changes")));
+            node.insert(QStringLiteral("selectors"), selectors);
+        }
     }
 
     QJsonArray annotatedChildren;
@@ -626,6 +656,19 @@ static QJsonObject applyDelegateCellContext(QJsonObject node, int row, int colum
                 QStringLiteral("medium"),
                 QStringLiteral("row/column changes when model layout changes")));
         node.insert(QStringLiteral("selectors"), selectors);
+    } else if (stableIdKind.isEmpty() && row >= 0 && column >= 0
+               && delegateCellSourceSupportsSelector(cellSource)) {
+        const QString sourceValue = delegateSourceSelectorValue(node);
+        if (!sourceValue.isEmpty()) {
+            QJsonArray selectors = node.value(QStringLiteral("selectors")).toArray();
+            selectors.append(selector(
+                    QStringLiteral("sourceLocation+row+column"),
+                    QStringLiteral("sourceLocation=\"%1\" row=%2 column=%3")
+                            .arg(sourceValue).arg(row).arg(column),
+                    QStringLiteral("medium"),
+                    QStringLiteral("anonymous delegate; row/column changes when model layout changes")));
+            node.insert(QStringLiteral("selectors"), selectors);
+        }
     }
 
     QJsonArray annotatedChildren;
