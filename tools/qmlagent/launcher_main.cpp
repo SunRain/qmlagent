@@ -734,12 +734,18 @@ private:
             } },
             { QStringLiteral("nextActions"), m_sessionType == QLatin1String("preview")
                     ? QJsonArray{
+                              QStringLiteral("qmlagentctl methods"),
                               QStringLiteral("qmlagentctl reload-preview"),
                               QStringLiteral("qmlagentctl wait '<selector>' --state found"),
                               QStringLiteral("qmlagentctl query '<selector>'"),
+                              QStringLiteral("qmlagentctl query-many --params '{\"queries\":[...]}'"),
+                              QStringLiteral("qmlagentctl scroll-into-view '<selector>'"),
                       }
                     : QJsonArray{
+                              QStringLiteral("qmlagentctl methods"),
                               QStringLiteral("qmlagentctl query '<selector>'"),
+                              QStringLiteral("qmlagentctl query-many --params '{\"queries\":[...]}'"),
+                              QStringLiteral("qmlagentctl scroll-into-view '<selector>'"),
                               QStringLiteral("rebuild/relaunch after source edits"),
                       } },
         };

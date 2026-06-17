@@ -166,12 +166,18 @@ id="tableCell" row=0 column=1
 
 ```
 inspect:   qmlagent.ui_query / qmlagent.ui_get_tree
+batch:     qmlagent.ui_query_many for multiple selectors/properties
 diagnose:  qmlagent.diagnostics_analyze_node / qmlagent.diagnostics_analyze_tree
 source:    qmlagent.source_resolve / qmlagent.diagnostics_analyze_binding
-act:       qmlagent.input_click / qmlagent.input_long_press / qmlagent.input_drag / qmlagent.input_wheel / qmlagent.input_clear_text / qmlagent.input_type_text
+act:       qmlagent.input_click / qmlagent.input_scroll_into_view / qmlagent.input_long_press / qmlagent.input_drag / qmlagent.input_wheel / qmlagent.input_clear_text / qmlagent.input_type_text
 wait:      qmlagent.ui_wait_for / qmlagent.workflow_click_and_wait
 verify:    UI / diagnostics / log evidence, not screenshots
 ```
+
+If a click or read reports `center_outside_viewport` for an instantiated but
+clipped target, call `qmlagent.input_scroll_into_view`, then retry the action
+or query. For virtualized rows that do not have a node yet, wheel toward the
+row and query again first.
 
 Use workflow tools when action and verification belong together:
 
@@ -203,9 +209,12 @@ Use `qmlagentctl` when MCP is unavailable or a shell command is simpler:
 
 ```
 "$QT_BIN/qmlagentctl" status --format compact
+"$QT_BIN/qmlagentctl" methods
 "$QT_BIN/qmlagentctl" query 'id="saveButton"' --property text --format compact
+"$QT_BIN/qmlagentctl" query-many --params '{"queries":[{"selector":"id=\"saveButton\""},{"selector":"id=\"statusLabel\"","properties":["text"]}]}' --format compact
 "$QT_BIN/qmlagentctl" wait 'id="detailsPopup"' --state found --timeout 1000
 "$QT_BIN/qmlagentctl" click 'id="saveButton"'
+"$QT_BIN/qmlagentctl" scroll-into-view 'id="saveButton"'
 "$QT_BIN/qmlagentctl" long-press 'id="contextButton"' --hold-ms 900
 "$QT_BIN/qmlagentctl" clear-text 'id="urlField"'
 "$QT_BIN/qmlagentctl" type 'id="urlField"' --text 'https://qt.io'
@@ -222,6 +231,8 @@ Raw protocol escape hatch:
 ```
 "$QT_BIN/qmlagentctl" call --help
 "$QT_BIN/qmlagentctl" call UI.query --params '{"selector":"id=\"saveButton\""}'
+"$QT_BIN/qmlagentctl" call UI.queryMany --params '{"queries":[{"selector":"id=\"saveButton\""},{"selector":"id=\"statusLabel\"","properties":["text"]}]}'
+"$QT_BIN/qmlagentctl" call Input.scrollIntoView --params '{"selector":"id=\"saveButton\""}'
 "$QT_BIN/qmlagentctl" call Render.captureScreenshot --params '{"omitData":true,"scale":0.5}'
 ```
 

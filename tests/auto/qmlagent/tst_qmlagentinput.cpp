@@ -65,6 +65,8 @@ void tst_QQmlAgentInput::clickNodeFailureReasons_data()
                               << QStringLiteral("disabled");
     QTest::newRow("zero_size") << QStringLiteral("zeroSizeItem")
                                << QStringLiteral("zero_size");
+    QTest::newRow("center_outside_viewport") << QStringLiteral("centerOutsideViewportItem")
+                                             << QStringLiteral("center_outside_viewport");
     QTest::newRow("unknown_window") << QStringLiteral("windowlessItem")
                                     << QStringLiteral("unknown_window");
 }
@@ -110,6 +112,17 @@ void tst_QQmlAgentInput::clickNodeFailureReasons()
         item->setVisible(true);
         nodeId = QQmlDebugService::idForObject(item.get());
         object = std::move(item);
+    } else if (caseName == QLatin1String("centerOutsideViewportItem")) {
+        window = std::make_unique<QQuickWindow>();
+        window->resize(100, 100);
+        auto item = std::make_unique<QQuickItem>();
+        item->setParentItem(window->contentItem());
+        item->setY(200);
+        item->setWidth(10);
+        item->setHeight(10);
+        item->setVisible(true);
+        nodeId = QQmlDebugService::idForObject(item.get());
+        object = std::move(item);
     } else if (caseName == QLatin1String("windowlessItem")) {
         auto item = std::make_unique<QQuickItem>();
         item->setWidth(10);
@@ -131,6 +144,17 @@ void tst_QQmlAgentInput::clickNodeFailureReasons()
     QVERIFY2(!diagnostic.value(QStringLiteral("message")).toString().isEmpty(),
              qPrintable(QString::fromUtf8(QJsonDocument(diagnostic)
                                           .toJson(QJsonDocument::Compact))));
+    if (expectedReason == QLatin1String("center_outside_viewport")) {
+        const QJsonArray nextHints = result.value(QStringLiteral("nextHints")).toArray();
+        QVERIFY2(!nextHints.isEmpty(),
+                 qPrintable(QString::fromUtf8(QJsonDocument(result).toJson(QJsonDocument::Compact))));
+        QCOMPARE(nextHints.at(0).toObject().value(QStringLiteral("method")).toString(),
+                 QStringLiteral("Input.scrollIntoView"));
+        QCOMPARE(nextHints.at(0).toObject().value(QStringLiteral("tool")).toString(),
+                 QStringLiteral("qmlagent.input_scroll_into_view"));
+        QVERIFY(nextHints.at(0).toObject().value(QStringLiteral("cli")).toString()
+                        .contains(QStringLiteral("qmlagentctl scroll-into-view")));
+    }
 }
 
 void tst_QQmlAgentInput::dispatchKeyEventRejectsInvalidKey()

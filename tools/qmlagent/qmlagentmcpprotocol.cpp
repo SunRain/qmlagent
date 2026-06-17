@@ -129,7 +129,7 @@ QJsonArray toolList()
              QStringLiteral("Detach from the current QmlAgent target. Use before relaunching or switching target processes."),
              schema({})),
         tool(QStringLiteral("qmlagent.target_status"),
-             QStringLiteral("Start here. Return whether this MCP server is directly attached and whether a qmlagent-launcher gateway is available for automatic request/response routing. If a single qmlagent-launcher session exists, qmlagent.ui_query, qmlagent.input_click, qmlagent.ui_wait_for, qmlagent.preview_reload, and workflow tools work without qmlagent.connect_tcp/connect_local_socket. Direct attach is still required for streamed subscriptions."),
+             QStringLiteral("Start here. Return whether this MCP server is directly attached and whether a qmlagent-launcher gateway is available for automatic request/response routing. If a single qmlagent-launcher session exists, qmlagent.ui_query, qmlagent.ui_query_many, qmlagent.input_click, qmlagent.input_scroll_into_view, qmlagent.ui_wait_for, qmlagent.preview_reload, and workflow tools work without qmlagent.connect_tcp/connect_local_socket. Direct attach is still required for streamed subscriptions."),
              schema({})),
         tool(QStringLiteral("qmlagent.launcher_status"),
              QStringLiteral("Discover qmlagent-launcher sessions in the current workspace. If exactly one live session exists, target-backed request/response MCP tools auto-route through it. The result names the exact launch form and whether qmlagent.preview_reload is supported."),

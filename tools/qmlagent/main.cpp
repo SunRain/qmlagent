@@ -953,13 +953,9 @@ static QString argumentValue(const QStringList &arguments, const QString &name,
     return defaultValue;
 }
 
-static void printCallHelp()
+static QStringList qmlAgentProtocolMethods()
 {
-    QTextStream stream(stdout);
-    stream << "Usage:\n"
-           << "  qmlagentctl call <Method.Name> --params '{...}' [--format compact|pretty]\n\n"
-           << "QmlAgent protocol methods:\n";
-    const QStringList methods{
+    return {
         QStringLiteral("Session.getInfo"),
         QStringLiteral("Session.configure"),
         QStringLiteral("Session.reset"),
@@ -968,6 +964,7 @@ static void printCallHelp()
         QStringLiteral("Log.clear"),
         QStringLiteral("UI.getTree"),
         QStringLiteral("UI.query"),
+        QStringLiteral("UI.queryMany"),
         QStringLiteral("UI.waitFor"),
         QStringLiteral("UI.describeNode"),
         QStringLiteral("UI.getBoxModel"),
@@ -979,6 +976,7 @@ static void printCallHelp()
         QStringLiteral("Input.clickNode"),
         QStringLiteral("Input.longPressNode"),
         QStringLiteral("Input.wheel"),
+        QStringLiteral("Input.scrollIntoView"),
         QStringLiteral("Input.focusNode"),
         QStringLiteral("Input.dispatchMouseEvent"),
         QStringLiteral("Input.dragNode"),
@@ -990,13 +988,43 @@ static void printCallHelp()
         QStringLiteral("Runtime.invokeMethod"),
         QStringLiteral("Source.resolveNode"),
     };
-    for (const QString &method : methods)
+}
+
+static void printProtocolMethods(QTextStream &stream)
+{
+    stream << "QmlAgent protocol methods:\n";
+    for (const QString &method : qmlAgentProtocolMethods())
         stream << "  " << method << '\n';
+}
+
+static void printCallHelp()
+{
+    QTextStream stream(stdout);
+    stream << "Usage:\n"
+           << "  qmlagentctl call <Method.Name> --params '{...}' [--format compact|pretty]\n\n";
+    printProtocolMethods(stream);
     stream << "\nExamples:\n"
            << "  qmlagentctl call UI.query --params '{\"selector\":\"id=\\\"saveButton\\\"\"}'\n"
+           << "  qmlagentctl call UI.queryMany --params '{\"queries\":[{\"selector\":\"id=\\\"saveButton\\\"\"},{\"selector\":\"id=\\\"statusLabel\\\"\",\"properties\":[\"text\"]}]}'\n"
+           << "  qmlagentctl call Input.scrollIntoView --params '{\"selector\":\"id=\\\"saveButton\\\"\"}'\n"
            << "  qmlagentctl call UI.waitFor --params '{\"selector\":\"id=\\\"popup\\\"\",\"until\":{\"state\":\"found\"}}'\n"
            << "  qmlagentctl call Diagnostics.analyzeBinding --params '{\"selector\":\"id=\\\"panel\\\"\",\"property\":\"x\"}'\n"
            << "  qmlagentctl call Render.captureScreenshot --params '{\"omitData\":true,\"scale\":0.5}'\n";
+}
+
+static void printMethodsHelp()
+{
+    QTextStream stream(stdout);
+    stream << "Usage:\n"
+           << "  qmlagentctl methods\n"
+           << "  qmlagentctl capabilities\n\n";
+    printProtocolMethods(stream);
+    stream << "\nHigh-leverage methods for agent loops:\n"
+           << "  UI.queryMany             batch several selector/property reads\n"
+           << "  Input.scrollIntoView     recover from center_outside_viewport on clipped content\n"
+           << "\nMCP/tool equivalents:\n"
+           << "  qmlagent.ui_query_many\n"
+           << "  qmlagent.input_scroll_into_view\n";
 }
 
 static int runCtlSubcommand(const QStringList &arguments)
@@ -1007,9 +1035,12 @@ static int runCtlSubcommand(const QStringList &arguments)
                 << "Usage:\n"
                 << "  qmlagentctl sessions\n"
                 << "  qmlagentctl status\n"
+                << "  qmlagentctl methods\n"
                 << "  qmlagentctl query <selector> [--property name] [--format compact|pretty]\n"
+                << "  qmlagentctl query-many --params '{\"queries\":[...]}' [--format compact|pretty]\n"
                 << "  qmlagentctl binding <selector> --property name [--format compact|pretty]\n"
                 << "  qmlagentctl click <selector>\n"
+                << "  qmlagentctl scroll-into-view <selector>\n"
                 << "  qmlagentctl long-press <selector> [--hold-ms ms]\n"
                 << "  qmlagentctl type <selector> --text value\n"
                 << "  qmlagentctl clear-text <selector>\n"
@@ -1022,11 +1053,18 @@ static int runCtlSubcommand(const QStringList &arguments)
                 << "diagnostics, source, log, and input/workflow evidence first;\n"
                 << "--include-data is opt-in to preserve agent context.\n"
                 << "--scale/--region keep fallback visual bytes bounded.\n"
-                << "--out writes PNG bytes to a file without printing base64 data.\n";
+                << "--out writes PNG bytes to a file without printing base64 data.\n"
+                << "If a click/read reports center_outside_viewport for an instantiated clipped target,\n"
+                << "run qmlagentctl scroll-into-view <selector>, then retry the action or query.\n";
         return 0;
     }
 
     const QString command = arguments.at(1);
+    if (command == QLatin1String("methods") || command == QLatin1String("capabilities")) {
+        printMethodsHelp();
+        return 0;
+    }
+
     const QString format = argumentValue(arguments, QStringLiteral("--format"), QStringLiteral("pretty"));
     const QString wantedSession = argumentValue(arguments, QStringLiteral("--session"));
     bool ok = false;
@@ -1053,9 +1091,11 @@ static int runCtlSubcommand(const QStringList &arguments)
         QStringLiteral("reload-preview"),
         QStringLiteral("call"),
         QStringLiteral("query"),
+        QStringLiteral("query-many"),
         QStringLiteral("inspect"),
         QStringLiteral("binding"),
         QStringLiteral("click"),
+        QStringLiteral("scroll-into-view"),
         QStringLiteral("long-press"),
         QStringLiteral("type"),
         QStringLiteral("clear-text"),
@@ -1116,6 +1156,16 @@ static int runCtlSubcommand(const QStringList &arguments)
             if (parseError.error != QJsonParseError::NoError || !document.isObject())
                 return fail(QStringLiteral("--params must be a JSON object."));
             params = document.object();
+        } else if (command == QLatin1String("query-many")) {
+            if (!arguments.contains(QStringLiteral("--params")))
+                return fail(QStringLiteral("qmlagentctl query-many requires --params JSON."));
+            method = QStringLiteral("UI.queryMany");
+            const QByteArray paramsBytes = argumentValue(arguments, QStringLiteral("--params")).toUtf8();
+            QJsonParseError parseError;
+            const QJsonDocument document = QJsonDocument::fromJson(paramsBytes, &parseError);
+            if (parseError.error != QJsonParseError::NoError || !document.isObject())
+                return fail(QStringLiteral("--params must be a JSON object."));
+            params = document.object();
         } else if (command == QLatin1String("query") || command == QLatin1String("inspect")) {
             if (arguments.size() < 3)
                 return fail(QStringLiteral("qmlagentctl %1 requires a selector.").arg(command));
@@ -1150,6 +1200,11 @@ static int runCtlSubcommand(const QStringList &arguments)
             if (arguments.size() < 3)
                 return fail(QStringLiteral("qmlagentctl click requires a selector."));
             method = QStringLiteral("Input.clickNode");
+            params = { { QStringLiteral("selector"), arguments.at(2) } };
+        } else if (command == QLatin1String("scroll-into-view")) {
+            if (arguments.size() < 3)
+                return fail(QStringLiteral("qmlagentctl scroll-into-view requires a selector."));
+            method = QStringLiteral("Input.scrollIntoView");
             params = { { QStringLiteral("selector"), arguments.at(2) } };
         } else if (command == QLatin1String("long-press")) {
             if (arguments.size() < 3)
@@ -2328,6 +2383,8 @@ private:
             { QStringLiteral("discoverabilityContract"),
               QStringLiteral("Every qmlagent.* tool named in this guide should appear in advertisedTools. If a lazy agent runtime has not exposed one yet, search by the exact tool name from advertisedTools.") },
             { QStringLiteral("inspect"), QStringLiteral("qmlagent.ui_query") },
+            { QStringLiteral("batchVerificationReads"),
+              QStringLiteral("qmlagent.ui_query_many") },
             { QStringLiteral("tree"), QStringLiteral("qmlagent.ui_get_tree") },
             { QStringLiteral("click"), QStringLiteral("qmlagent.input_click") },
             { QStringLiteral("longPress"), QStringLiteral("qmlagent.input_long_press") },
@@ -2335,6 +2392,8 @@ private:
               QStringLiteral("qmlagent.input_drag") },
             { QStringLiteral("scrollFlickableListViewGridViewTableViewTreeView"),
               QStringLiteral("qmlagent.input_wheel") },
+            { QStringLiteral("scrollClippedTargetIntoView"),
+              QStringLiteral("qmlagent.input_scroll_into_view") },
             { QStringLiteral("waitForSelectorOrProperty"),
               QStringLiteral("qmlagent.ui_wait_for") },
             { QStringLiteral("clickAndWaitForDrawerMenuPopupDialogLoaderTransition"),
@@ -2351,7 +2410,9 @@ private:
             { QStringLiteral("toolSearchHints"), QJsonArray{
                 QStringLiteral("qmlagent.workflow_click_and_wait Drawer Popup Dialog ComboBox QQuickPopupItem transition wait"),
                 QStringLiteral("qmlagent.workflow_long_press_and_wait long press press-and-hold MouseArea onPressAndHold context menu alternate action"),
+                QStringLiteral("qmlagent.ui_query_many batch multiple selectors properties verification"),
                 QStringLiteral("qmlagent.input_long_press press-and-hold long press"),
+                QStringLiteral("qmlagent.input_scroll_into_view center_outside_viewport clipped content retry click"),
                 QStringLiteral("qmlagent.ui_wait_for wait until selector found property visible"),
                 QStringLiteral("qmlagent.ui_query popup contents ItemDelegate MenuItem visible choices"),
                 QStringLiteral("qmlagent.input_drag Slider RangeSlider Dial handle drag"),
@@ -2364,6 +2425,8 @@ private:
                   QStringLiteral("Use qmlagent.input_click followed by qmlagent.ui_wait_for.") },
                 { QStringLiteral("workflow_long_press_and_wait_missing"),
                   QStringLiteral("Use qmlagent.input_long_press followed by qmlagent.ui_wait_for.") },
+                { QStringLiteral("center_outside_viewport"),
+                  QStringLiteral("Use qmlagent.input_scroll_into_view for instantiated clipped content, then retry the click/read. For virtualized rows that have no node yet, wheel toward them and re-query first.") },
                 { QStringLiteral("visualEvidenceNeeded"),
                   QStringLiteral("Use qmlagent.render_capture_screenshot only after structured runtime evidence is insufficient; default output omits PNG data. If includeData:true is necessary, pass scale and/or region.") },
             } },

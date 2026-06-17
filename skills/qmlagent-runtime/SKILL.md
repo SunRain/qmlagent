@@ -71,6 +71,7 @@ Normal order:
 qmlagent.target_status
 launch or confirm one qmlagent-launcher session
 qmlagent.ui_query / qmlagent.ui_get_tree
+qmlagent.ui_query_many for multiple verification reads
 qmlagent.diagnostics_* / qmlagent.source_resolve / qmlagent.log_get_entries
 qmlagent.input_* / qmlagent.workflow_*
 patch source
@@ -90,9 +91,12 @@ available:
 ```sh
 "$QT_BIN/qmlagentctl" sessions --format compact
 "$QT_BIN/qmlagentctl" status --format compact
+"$QT_BIN/qmlagentctl" methods
 "$QT_BIN/qmlagentctl" query 'id="saveButton"' --property text --format compact
+"$QT_BIN/qmlagentctl" query-many --params '{"queries":[{"selector":"id=\"saveButton\""},{"selector":"id=\"statusLabel\"","properties":["text"]}]}' --format compact
 "$QT_BIN/qmlagentctl" wait 'id="detailsPopup"' --state found --timeout 1000
 "$QT_BIN/qmlagentctl" click 'id="saveButton"'
+"$QT_BIN/qmlagentctl" scroll-into-view 'id="saveButton"'
 "$QT_BIN/qmlagentctl" long-press 'id="contextButton"' --hold-ms 900
 "$QT_BIN/qmlagentctl" clear-text 'id="urlField"'
 "$QT_BIN/qmlagentctl" type 'id="urlField"' --text 'go.dev'
@@ -124,6 +128,12 @@ base64 does not enter the agent context. For MCP screenshot bytes, pass
   expression, source location, and dependency limitations.
 - Use `UI.waitFor` or workflow tools for transitions, popups, loaders,
   animations, and async post-action state. Do not use sleeps.
+- Use `qmlagent.ui_query_many` or shell `qmlagentctl query-many` for multiple
+  selectors/properties after one action instead of serial query calls.
+- If click/read evidence reports `center_outside_viewport`, use
+  `qmlagent.input_scroll_into_view` or shell `qmlagentctl scroll-into-view`,
+  then retry the action/query. For not-yet-instantiated virtualized rows,
+  wheel toward the row and re-query first.
 - To enter new text into an occupied field, use native `qmlagent.input_clear_text` followed by
   `qmlagent.input_type_text`, or shell `qmlagentctl clear-text` followed by
   `qmlagentctl type`, then verify with `UI.query` or `UI.waitFor`.

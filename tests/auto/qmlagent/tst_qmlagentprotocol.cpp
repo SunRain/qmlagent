@@ -226,6 +226,27 @@ void tst_QQmlAgentProtocol::mcpToolSchemasExposeAgentFirstContracts()
                     .value(QStringLiteral("properties")).toObject()
                     .contains(QStringLiteral("settle")));
 
+    const QJsonObject targetStatus = mcpToolByName(QStringLiteral("qmlagent.target_status"));
+    QVERIFY(!targetStatus.isEmpty());
+    const QString targetStatusDescription = targetStatus.value(QStringLiteral("description")).toString();
+    QVERIFY2(targetStatusDescription.contains(QStringLiteral("qmlagent.ui_query_many")),
+             qPrintable(targetStatusDescription));
+    QVERIFY2(targetStatusDescription.contains(QStringLiteral("qmlagent.input_scroll_into_view")),
+             qPrintable(targetStatusDescription));
+
+    const QJsonObject queryMany = mcpToolByName(QStringLiteral("qmlagent.ui_query_many"));
+    QVERIFY(!queryMany.isEmpty());
+    QVERIFY2(queryMany.value(QStringLiteral("description")).toString()
+                    .contains(QStringLiteral("Batch verification reads")),
+             qPrintable(QJsonDocument(queryMany).toJson(QJsonDocument::Compact)));
+
+    const QJsonObject scrollIntoView =
+            mcpToolByName(QStringLiteral("qmlagent.input_scroll_into_view"));
+    QVERIFY(!scrollIntoView.isEmpty());
+    const QString scrollDescription = scrollIntoView.value(QStringLiteral("description")).toString();
+    QVERIFY2(scrollDescription.contains(QStringLiteral("center_outside_viewport")),
+             qPrintable(QJsonDocument(scrollIntoView).toJson(QJsonDocument::Compact)));
+
     const QJsonObject workflowClickAndWait =
             mcpToolByName(QStringLiteral("qmlagent.workflow_click_and_wait"));
     QVERIFY(!workflowClickAndWait.isEmpty());
@@ -267,10 +288,25 @@ void tst_QQmlAgentProtocol::agentFacingSurfaceDoesNotAdvertiseRetiredNames()
 
     QVERIFY(readme.contains(QStringLiteral("clear-text")));
     QVERIFY(readme.contains(QStringLiteral("type 'id=\"urlField\"' --text")));
+    QVERIFY(readme.contains(QStringLiteral("qmlagent.ui_query_many")));
+    QVERIFY(readme.contains(QStringLiteral("qmlagent.input_scroll_into_view")));
+    QVERIFY(readme.contains(QStringLiteral("qmlagentctl\" methods")));
+    QVERIFY(readme.contains(QStringLiteral("query-many --params")));
+    QVERIFY(readme.contains(QStringLiteral("scroll-into-view 'id=\"saveButton\"'")));
     QVERIFY(skill.contains(QStringLiteral("qmlagent.input_clear_text")));
     QVERIFY(skill.contains(QStringLiteral("qmlagent.input_type_text")));
+    QVERIFY(skill.contains(QStringLiteral("qmlagent.ui_query_many")));
+    QVERIFY(skill.contains(QStringLiteral("qmlagent.input_scroll_into_view")));
+    QVERIFY(skill.contains(QStringLiteral("qmlagentctl\" methods")));
+    QVERIFY(cli.contains(QStringLiteral("qmlagentctl methods")));
+    QVERIFY(cli.contains(QStringLiteral("qmlagentctl capabilities")));
     QVERIFY(cli.contains(QStringLiteral("qmlagentctl type <selector> --text value")));
     QVERIFY(cli.contains(QStringLiteral("qmlagentctl clear-text <selector>")));
+    QVERIFY(cli.contains(QStringLiteral("qmlagentctl query-many --params")));
+    QVERIFY(cli.contains(QStringLiteral("qmlagentctl scroll-into-view <selector>")));
+    QVERIFY(cli.contains(QStringLiteral("UI.queryMany")));
+    QVERIFY(cli.contains(QStringLiteral("Input.scrollIntoView")));
+    QVERIFY(cli.contains(QStringLiteral("center_outside_viewport")));
 }
 
 QTEST_GUILESS_MAIN(tst_QQmlAgentProtocol)

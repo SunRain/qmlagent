@@ -88,6 +88,26 @@ static QString actionabilityFailureMessage(const QString &reason)
     return {};
 }
 
+static QJsonArray actionabilityFailureHints(const QString &reason)
+{
+    if (reason == QLatin1String("center_outside_viewport")) {
+        return {
+            QJsonObject{
+                { QStringLiteral("method"), QStringLiteral("Input.scrollIntoView") },
+                { QStringLiteral("tool"), QStringLiteral("qmlagent.input_scroll_into_view") },
+                { QStringLiteral("cli"), QStringLiteral("qmlagentctl scroll-into-view '<selector>'") },
+                { QStringLiteral("reason"), QStringLiteral("Scroll instantiated clipped content into view, then retry the input or query.") },
+            },
+            QJsonObject{
+                { QStringLiteral("method"), QStringLiteral("Input.wheel") },
+                { QStringLiteral("tool"), QStringLiteral("qmlagent.input_wheel") },
+                { QStringLiteral("reason"), QStringLiteral("For virtualized rows that have no node yet, wheel toward the row and re-query first.") },
+            },
+        };
+    }
+    return {};
+}
+
 static QJsonObject failure(const QString &reason, int nodeId, const QJsonArray &evidence)
 {
     const QString message = [reason]() {
@@ -101,7 +121,7 @@ static QJsonObject failure(const QString &reason, int nodeId, const QJsonArray &
         return QStringLiteral("Input cannot be delivered to this node.");
     }();
 
-    return {
+    QJsonObject result{
         { QStringLiteral("delivered"), false },
         { QStringLiteral("reason"), reason },
         { QStringLiteral("diagnostics"), QJsonArray{ QJsonObject{
@@ -113,6 +133,10 @@ static QJsonObject failure(const QString &reason, int nodeId, const QJsonArray &
             { QStringLiteral("evidence"), evidence },
         } } },
     };
+    const QJsonArray nextHints = actionabilityFailureHints(reason);
+    if (!nextHints.isEmpty())
+        result.insert(QStringLiteral("nextHints"), nextHints);
+    return result;
 }
 
 static QJsonObject longPressFailure(const QString &reason, int nodeId, const QJsonArray &evidence)
@@ -134,7 +158,7 @@ static QJsonObject longPressFailure(const QString &reason, int nodeId, const QJs
         return QStringLiteral("Long press input cannot be delivered to this node.");
     }();
 
-    return {
+    QJsonObject result{
         { QStringLiteral("delivered"), false },
         { QStringLiteral("reason"), reason },
         { QStringLiteral("diagnostics"), QJsonArray{ QJsonObject{
@@ -146,6 +170,10 @@ static QJsonObject longPressFailure(const QString &reason, int nodeId, const QJs
             { QStringLiteral("evidence"), evidence },
         } } },
     };
+    const QJsonArray nextHints = actionabilityFailureHints(reason);
+    if (!nextHints.isEmpty())
+        result.insert(QStringLiteral("nextHints"), nextHints);
+    return result;
 }
 
 static QJsonObject failureWithDiagnostics(const QString &reason, const QJsonArray &diagnostics)
@@ -248,7 +276,7 @@ static QJsonObject wheelFailure(const QString &reason, int nodeId, const QJsonAr
         return QStringLiteral("Wheel input cannot be delivered to this node.");
     }();
 
-    return {
+    QJsonObject result{
         { QStringLiteral("delivered"), false },
         { QStringLiteral("reason"), reason },
         { QStringLiteral("diagnostics"), QJsonArray{ QJsonObject{
@@ -260,11 +288,15 @@ static QJsonObject wheelFailure(const QString &reason, int nodeId, const QJsonAr
             { QStringLiteral("evidence"), evidence },
         } } },
     };
+    const QJsonArray nextHints = actionabilityFailureHints(reason);
+    if (!nextHints.isEmpty())
+        result.insert(QStringLiteral("nextHints"), nextHints);
+    return result;
 }
 
 static QJsonObject keyFailure(const QString &reason, const QJsonArray &evidence)
 {
-    return {
+    QJsonObject result{
         { QStringLiteral("delivered"), false },
         { QStringLiteral("reason"), reason },
         { QStringLiteral("diagnostics"), QJsonArray{ QJsonObject{
@@ -274,6 +306,10 @@ static QJsonObject keyFailure(const QString &reason, const QJsonArray &evidence)
             { QStringLiteral("evidence"), evidence },
         } } },
     };
+    const QJsonArray nextHints = actionabilityFailureHints(reason);
+    if (!nextHints.isEmpty())
+        result.insert(QStringLiteral("nextHints"), nextHints);
+    return result;
 }
 
 static QJsonObject mouseFailure(const QString &reason, int nodeId, const QJsonArray &evidence)
@@ -295,7 +331,7 @@ static QJsonObject mouseFailure(const QString &reason, int nodeId, const QJsonAr
         return QStringLiteral("Mouse input cannot be delivered to this node.");
     }();
 
-    return {
+    QJsonObject result{
         { QStringLiteral("delivered"), false },
         { QStringLiteral("reason"), reason },
         { QStringLiteral("diagnostics"), QJsonArray{ QJsonObject{
@@ -307,6 +343,10 @@ static QJsonObject mouseFailure(const QString &reason, int nodeId, const QJsonAr
             { QStringLiteral("evidence"), evidence },
         } } },
     };
+    const QJsonArray nextHints = actionabilityFailureHints(reason);
+    if (!nextHints.isEmpty())
+        result.insert(QStringLiteral("nextHints"), nextHints);
+    return result;
 }
 
 static QJsonObject dragFailure(const QString &reason, int nodeId, const QJsonArray &evidence)
