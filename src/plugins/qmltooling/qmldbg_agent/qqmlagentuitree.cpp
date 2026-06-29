@@ -233,6 +233,12 @@ struct SelectorUniquenessIndex
     // handle); delegate instances share one line, so the location alone is
     // ambiguous and needs an index/row/column qualifier.
     QHash<QString, int> sourceLocationCounts;
+    // Per-object ordinal among all nodes sharing its source location, in
+    // tree-walk order. For repeated non-delegate component instances (which
+    // have no model index) this is the disambiguating qualifier:
+    // sourceLocation="X" instance=N. Computed once here so emission and
+    // resolution assign the same ordinal to the same object.
+    QHash<const QObject *, int> sourceLocationOrdinal;
 };
 
 // A source location is a usable selector only when it is app-authored and
@@ -266,6 +272,8 @@ static QString sourceLocationSelectorForObject(QObject *object)
 static SelectorUniquenessIndex buildSelectorUniquenessIndex()
 {
     SelectorUniquenessIndex index;
+    // Objects per source-location selector, assigned ordinals after the walk.
+    QHash<QString, QVector<QObject *>> sourceGroups;
     const QWindowList windows = QGuiApplication::allWindows();
     for (QWindow *window : windows) {
         QQuickWindow *quickWindow = qobject_cast<QQuickWindow *>(window);
@@ -288,18 +296,31 @@ static SelectorUniquenessIndex buildSelectorUniquenessIndex()
                 ++index.idCounts[qmlId];
             if (!item->objectName().isEmpty())
                 ++index.objectNameCounts[item->objectName()];
-            // Count over every item, not just anonymous ones: a delegate
+            // Group over every item, not just anonymous ones: a delegate
             // line repeats across instances whether or not the delegate has
             // a (delegate-local, non-unique) id, and includeSource offers
-            // the source selector on those too. Counting only anonymous
-            // items would leave the repeated location looking unique.
+            // the source selector on those too.
             const QString sourceSelector = sourceLocationSelectorForObject(item);
             if (!sourceSelector.isEmpty())
-                ++index.sourceLocationCounts[sourceSelector];
+                sourceGroups[sourceSelector].append(item);
             const QList<QQuickItem *> children = item->childItems();
             for (QQuickItem *child : children)
                 stack.append(child);
         }
+    }
+    // Assign the per-instance ordinal by sorting each group on the stable
+    // session node id, NOT tree-walk order: stacking/visibility can reorder
+    // childItems between calls, which would make a walk-order ordinal flip
+    // and break round-trips. idForObject is fixed for the session, so the
+    // same object keeps the same ordinal across getTree and query calls.
+    for (auto it = sourceGroups.begin(); it != sourceGroups.end(); ++it) {
+        QVector<QObject *> &group = it.value();
+        std::sort(group.begin(), group.end(), [](QObject *a, QObject *b) {
+            return QQmlDebugService::idForObject(a) < QQmlDebugService::idForObject(b);
+        });
+        index.sourceLocationCounts[it.key()] = group.size();
+        for (int ordinal = 0; ordinal < group.size(); ++ordinal)
+            index.sourceLocationOrdinal[group.at(ordinal)] = ordinal;
     }
     return index;
 }
@@ -332,6 +353,8 @@ struct SelectorCriteria
     int row = -1;
     bool hasColumn = false;
     int column = -1;
+    bool hasInstance = false;
+    int instance = -1;
 };
 
 static bool fieldRequested(const TreeBuildOptions &options, const QString &field)
@@ -865,12 +888,25 @@ static QJsonObject nodeForObjectInternal(QObject *object, int windowId, int dept
                                           QStringLiteral("medium"),
                                           QStringLiteral("authored source location; line/column confidence depends on source metadata")));
             } else {
-                // Repeated location: delegate instances share one line, so it
-                // is only unique together with the delegate index/row/column
-                // appended by the delegate-context pass.
+                // Repeated location: instances share one line. Delegates get
+                // an index/row/column qualifier from the delegate pass; for
+                // repeated non-delegate component instances the disambiguator
+                // is the source-location ordinal computed in the uniqueness
+                // index. Embed it for matching and offer it as a handle.
                 selectors.append(selector(QStringLiteral("sourceLocation"), sourceSelector,
                                           QStringLiteral("low"),
-                                          QStringLiteral("source location repeats across delegate instances; add index/row/column to disambiguate")));
+                                          QStringLiteral("source location repeats across instances; add index/row/column (delegates) or instance to disambiguate")));
+                const int ordinal =
+                        options.uniqueness.sourceLocationOrdinal.value(object, -1);
+                if (ordinal >= 0) {
+                    node.insert(QStringLiteral("sourceInstance"), ordinal);
+                    selectors.append(selector(
+                            QStringLiteral("sourceLocation+instance"),
+                            QStringLiteral("sourceLocation=\"%1\" instance=%2")
+                                    .arg(sourceSelector).arg(ordinal),
+                            QStringLiteral("medium"),
+                            QStringLiteral("ordinal among instances of this component; changes if instantiation order changes")));
+                }
             }
         }
     }
@@ -1195,6 +1231,10 @@ static bool nodeMatchesSelector(const QJsonObject &node, const SelectorCriteria 
         return false;
     if (criteria.hasColumn && delegate.value(QStringLiteral("column")).toInt(-1) != criteria.column)
         return false;
+    if (criteria.hasInstance
+            && node.value(QStringLiteral("sourceInstance")).toInt(-1) != criteria.instance) {
+        return false;
+    }
     return true;
 }
 
@@ -1518,6 +1558,13 @@ static bool parseSelector(const QString &selectorText, SelectorCriteria *criteri
                 return false;
             criteria->hasIndex = true;
             criteria->index = index;
+        } else if (kind == QLatin1String("instance")) {
+            bool ok = false;
+            const int instance = value.toInt(&ok);
+            if (!ok || instance < 0)
+                return false;
+            criteria->hasInstance = true;
+            criteria->instance = instance;
         } else if (kind == QLatin1String("row")) {
             bool ok = false;
             const int row = value.toInt(&ok);
