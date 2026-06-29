@@ -353,6 +353,14 @@ public:
 
     QJsonObject reload(const QString &qmlFile)
     {
+        // Reload re-instantiates the window, which would otherwise snap back
+        // to the QML's declared size at the default position. Capture the
+        // current placement first so preview-driven iteration keeps the
+        // window where the presenter put it.
+        QRect savedGeometry;
+        if (QWindow *existing = currentWindow())
+            savedGeometry = existing->geometry();
+
         deleteLoadedRoots();
         m_warnings = {};
         m_engine.clearComponentCache();
@@ -364,17 +372,27 @@ public:
             m_loadedRoots.append(root);
 
         bool ok = !roots.isEmpty();
+        bool windowPreserved = false;
         QString rootKind;
         if (ok) {
             QObject *root = roots.constFirst();
             if (auto *window = qobject_cast<QWindow *>(root)) {
                 rootKind = QStringLiteral("window");
+                if (savedGeometry.isValid()) {
+                    window->setGeometry(savedGeometry);
+                    windowPreserved = true;
+                }
                 window->show();
             } else if (auto *item = qobject_cast<QQuickItem *>(root)) {
                 rootKind = QStringLiteral("item");
                 m_hostWindow = new QQuickWindow;
                 m_hostWindow->setTitle(QStringLiteral("QmlAgent Preview"));
-                m_hostWindow->resize(640, 420);
+                if (savedGeometry.isValid()) {
+                    m_hostWindow->setGeometry(savedGeometry);
+                    windowPreserved = true;
+                } else {
+                    m_hostWindow->resize(640, 420);
+                }
                 item->setParentItem(m_hostWindow->contentItem());
                 item->setParent(m_hostWindow);
                 if (item->width() <= 0)
@@ -395,10 +413,21 @@ public:
             { QStringLiteral("root"), qmlFile },
             { QStringLiteral("rootKind"), rootKind },
             { QStringLiteral("rootStatePreserved"), false },
-            { QStringLiteral("windowPreserved"), false },
+            { QStringLiteral("windowPreserved"), windowPreserved },
             { QStringLiteral("loader"), QStringLiteral("QQmlApplicationEngine") },
             { QStringLiteral("errors"), m_warnings },
         };
+    }
+
+    QWindow *currentWindow() const
+    {
+        if (m_hostWindow)
+            return m_hostWindow;
+        for (const QPointer<QObject> &root : m_loadedRoots) {
+            if (auto *window = qobject_cast<QWindow *>(root.data()))
+                return window;
+        }
+        return nullptr;
     }
 
 private:
