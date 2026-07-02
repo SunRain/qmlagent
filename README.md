@@ -32,6 +32,12 @@ missing from its build.
 The plugin is a shared library loaded by the target app's QML debug server at
 runtime, which is why it installs into the Qt that the target links against.
 
+Compatibility contract: QmlAgent is built against Qt private APIs (QmlPrivate,
+QuickPrivate, QmlDebugPrivate, QuickTemplates2Private), which carry no source
+or binary stability guarantee. Expect to rebuild QmlAgent for every Qt
+release, and expect occasional source breakage when private internals move.
+The plugin must run inside the same Qt build it was compiled against.
+
 ## Install
 
 ```
@@ -271,6 +277,17 @@ disk:
 qmlagent.render_capture_screenshot(includeData=true, scale=0.5)
 "$QT_BIN/qmlagentctl" screenshot --out fallback.png --scale 0.5
 ```
+
+## Security Model
+
+The QML debug channel is unauthenticated. Launcher-owned sessions use private
+local sockets and 0700 per-user directories, so exposure is limited to the
+same user account. Manual TCP attach (`-qmljsdebugger=port:...`) listens on
+localhost without authentication on a deterministic per-user port: any local
+process can connect, read the UI, take screenshots, and synthesize input.
+Runtime mutation is additionally gated per session and off by default. Run
+targets under QmlAgent only in environments where every local process is
+trusted — development machines, CI sandboxes — never in production.
 
 ## Reporting Issues
 
