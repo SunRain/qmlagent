@@ -412,6 +412,9 @@ public:
             { QStringLiteral("ok"), ok },
             { QStringLiteral("root"), qmlFile },
             { QStringLiteral("rootKind"), rootKind },
+            // Contract statement, not a measurement: reload always destroys
+            // and re-instantiates the root, so QML-side state is gone and
+            // agents must re-drive the UI to the state they need.
             { QStringLiteral("rootStatePreserved"), false },
             { QStringLiteral("windowPreserved"), windowPreserved },
             { QStringLiteral("loader"), QStringLiteral("QQmlApplicationEngine") },
