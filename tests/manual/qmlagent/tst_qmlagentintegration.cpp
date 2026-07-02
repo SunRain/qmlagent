@@ -6,6 +6,7 @@
 
 #include <QtCore/qdeadlinetimer.h>
 #include <QtCore/qdir.h>
+#include <QtCore/qelapsedtimer.h>
 #include <QtCore/qfile.h>
 #include <QtCore/qfileinfo.h>
 #include <QtCore/qjsonarray.h>
@@ -77,11 +78,13 @@ private slots:
     void referenceClientReportsSingleClientConflict();
     void referenceClientMcpRefusesExistingLocalSocketPath();
     void referenceClientMcpConnectsLocalSocket();
+    void guiDispatchReportsTruthfulOutcomes();
 
 private:
     static std::optional<QJsonObject> invoke(QmlAgentDebugClient *client, const QString &method,
                                              const QJsonObject &params, int id,
-                                             QString *errorMessage);
+                                             QString *errorMessage,
+                                             int timeoutMs = RequestTimeoutMs);
 };
 
 static QByteArray waitForOutput(QProcess *process, const QByteArray &marker)
@@ -487,7 +490,7 @@ static bool evidenceContains(const QJsonObject &issue, const QString &needle)
 
 std::optional<QJsonObject> QmlAgentIntegrationTest::invoke(
         QmlAgentDebugClient *client, const QString &method, const QJsonObject &params, int id,
-        QString *errorMessage)
+        QString *errorMessage, int timeoutMs)
 {
     QEventLoop loop;
     QTimer timeout;
@@ -522,7 +525,7 @@ std::optional<QJsonObject> QmlAgentIntegrationTest::invoke(
         { QStringLiteral("params"), params },
     };
 
-    timeout.start(RequestTimeoutMs);
+    timeout.start(timeoutMs);
     client->sendMessage(QJsonDocument(request).toJson(QJsonDocument::Compact));
     if (!response.has_value())
         loop.exec();
@@ -5000,6 +5003,65 @@ void QmlAgentIntegrationTest::referenceClientMcpConnectsLocalSocket()
                      .value(QStringLiteral("connected")).toBool(),
              false);
     QVERIFY(responses.value(5).value(QStringLiteral("result")).isNull());
+}
+
+void QmlAgentIntegrationTest::guiDispatchReportsTruthfulOutcomes()
+{
+    // smoke.slowHandlerButton blocks the GUI thread for 8s on click — past
+    // the input dispatch budget (~5s) plus the grace window (1s in the test
+    // environment). The dispatch contract under test: the timeout response
+    // must say the outcome is unknown (never imply the click did not happen),
+    // requests during the stuck window must be refused as busy instead of
+    // interleaving, and once the handler finishes the click's effect must be
+    // observable.
+    QString errorMessage;
+    SmokeAppRunner smoke;
+    QVERIFY2(smoke.start(&errorMessage), qPrintable(errorMessage));
+
+    QQmlDebugConnection connection;
+    QmlAgentDebugClient client(&connection);
+    QVERIFY2(connectToQmlAgent(smoke.port(), &connection, &client, &errorMessage),
+             qPrintable(errorMessage));
+
+    QElapsedTimer sinceClick;
+    sinceClick.start();
+    const auto slowClickResponse = invoke(&client, QStringLiteral("Input.clickNode"), {
+        { QStringLiteral("selector"), QStringLiteral("objectName=\"smoke.slowHandlerButton\"") },
+    }, 1, &errorMessage, 8000);
+    QVERIFY2(slowClickResponse.has_value(), qPrintable(errorMessage));
+    const QJsonObject slowClickResult =
+            slowClickResponse->value(QStringLiteral("result")).toObject();
+    QCOMPARE(slowClickResult.value(QStringLiteral("timedOut")).toBool(false), true);
+    QCOMPARE(slowClickResult.value(QStringLiteral("outcome")).toString(),
+             QStringLiteral("unknown"));
+    QCOMPARE(slowClickResult.value(QStringLiteral("diagnostics")).toArray().at(0).toObject()
+                     .value(QStringLiteral("id")).toString(),
+             QStringLiteral("session.gui_thread_timeout"));
+
+    // The handler is still holding the GUI thread: further GUI-thread work
+    // must be refused, not queued behind it.
+    const auto busyResponse = invoke(&client, QStringLiteral("UI.query"), {
+        { QStringLiteral("selector"), QStringLiteral("objectName=\"smoke.content\"") },
+    }, 2, &errorMessage);
+    QVERIFY2(busyResponse.has_value(), qPrintable(errorMessage));
+    QCOMPARE(busyResponse->value(QStringLiteral("result")).toObject()
+                     .value(QStringLiteral("diagnostics")).toArray().at(0).toObject()
+                     .value(QStringLiteral("id")).toString(),
+             QStringLiteral("session.gui_thread_busy"));
+
+    // Wait out the handler, then prove the "timed out" click actually landed:
+    // the outcome-unknown wording exists precisely because effects can apply
+    // after the timeout was reported.
+    const qint64 handlerRemainingMs = 8000 - sinceClick.elapsed();
+    if (handlerRemainingMs > 0)
+        QTest::qWait(int(handlerRemainingMs) + 500);
+    const auto ranResponse = invoke(&client, QStringLiteral("UI.query"), {
+        { QStringLiteral("selector"), QStringLiteral("objectName=\"smoke.slowHandlerRan\"") },
+    }, 3, &errorMessage);
+    QVERIFY2(ranResponse.has_value(), qPrintable(errorMessage));
+    QCOMPARE(ranResponse->value(QStringLiteral("result")).toObject()
+                     .value(QStringLiteral("matches")).toArray().size(),
+             1);
 }
 
 QTEST_GUILESS_MAIN(QmlAgentIntegrationTest)

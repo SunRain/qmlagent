@@ -12,6 +12,7 @@ Window {
     property bool subscribedDynamicAdded: false
     property bool genericBlockedClicked: false
     property bool labelledControlClicked: false
+    property bool slowHandlerRan: false
     property bool longPressed: false
     property bool secondaryWindowClicked: false
     property int bindingBase: 70
@@ -288,6 +289,28 @@ Window {
             width: 6
             height: 6
             color: "#023047"
+        }
+    }
+
+    Rectangle {
+        id: slowHandlerButton
+        objectName: root.slowHandlerRan ? "smoke.slowHandlerRan"
+                                        : "smoke.slowHandlerButton"
+        x: 264
+        y: 84
+        width: 48
+        height: 20
+        color: root.slowHandlerRan ? "#1a7f37" : "#9a6700"
+
+        MouseArea {
+            anchors.fill: parent
+            // Deliberately blocks the GUI thread well past the input dispatch
+            // budget to exercise the timeout/grace/busy dispatch contract.
+            onClicked: {
+                var start = Date.now()
+                while (Date.now() - start < 8000) {}
+                root.slowHandlerRan = true
+            }
         }
     }
 

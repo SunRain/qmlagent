@@ -82,7 +82,10 @@ add_test(NAME qmlagent_tcp_smoke
 # synthetic drags; Basic keeps the run deterministic and identical across
 # macOS and Linux.
 set_tests_properties(qmlagent_tcp_smoke PROPERTIES
-    ENVIRONMENT "QTFRAMEWORK_BYPASS_LICENSE_CHECK=1;QT_QPA_PLATFORM=offscreen;QT_QUICK_CONTROLS_STYLE=Basic;QMLAGENT_SMOKE_APP=$<TARGET_FILE:qmlagent_smoke>;QMLAGENT_CONTROLS_APP=$<TARGET_FILE:qmlagent_controls_smoke>;QMLAGENT_FIXTURE_APP=$<TARGET_FILE:qmlagent_diagnostic_fixture>;QMLAGENT_FIXTURES_DIR=${CMAKE_SOURCE_DIR}/fixtures/diagnostics;QMLAGENT_WORKFLOW_FIXTURES_DIR=${CMAKE_SOURCE_DIR}/fixtures/workflows"
+    # QMLAGENT_GUI_DISPATCH_GRACE_MS=1000 shortens the started-request grace
+    # window so guiDispatchReportsTruthfulOutcomes exercises the abandoned/busy
+    # path without a very long blocking fixture.
+    ENVIRONMENT "QTFRAMEWORK_BYPASS_LICENSE_CHECK=1;QT_QPA_PLATFORM=offscreen;QT_QUICK_CONTROLS_STYLE=Basic;QMLAGENT_GUI_DISPATCH_GRACE_MS=1000;QMLAGENT_SMOKE_APP=$<TARGET_FILE:qmlagent_smoke>;QMLAGENT_CONTROLS_APP=$<TARGET_FILE:qmlagent_controls_smoke>;QMLAGENT_FIXTURE_APP=$<TARGET_FILE:qmlagent_diagnostic_fixture>;QMLAGENT_FIXTURES_DIR=${CMAKE_SOURCE_DIR}/fixtures/diagnostics;QMLAGENT_WORKFLOW_FIXTURES_DIR=${CMAKE_SOURCE_DIR}/fixtures/workflows"
     ENVIRONMENT_MODIFICATION "QT_PLUGIN_PATH=path_list_prepend:${CMAKE_BINARY_DIR}/plugins"
     TIMEOUT 90
 )

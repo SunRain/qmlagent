@@ -12,6 +12,7 @@
 #include "qqmlagentuitree_p.h"
 
 #include <QtCore/qcoreapplication.h>
+#include <QtCore/qelapsedtimer.h>
 #include <QtCore/qjsonarray.h>
 #include <QtCore/qpointer.h>
 #include <QtCore/qset.h>
@@ -147,6 +148,52 @@ static QJsonObject guiThreadTimeoutResult(int timeoutMs)
     };
 }
 
+static QJsonObject guiThreadOutcomeUnknownResult(int timeoutMs, int graceMs, const QString &method)
+{
+    return {
+        { QStringLiteral("ok"), false },
+        { QStringLiteral("timedOut"), true },
+        { QStringLiteral("outcome"), QStringLiteral("unknown") },
+        { QStringLiteral("diagnostics"), QJsonArray{ QJsonObject{
+            { QStringLiteral("id"), QStringLiteral("session.gui_thread_timeout") },
+            { QStringLiteral("severity"), QStringLiteral("error") },
+            { QStringLiteral("confidence"), 1.0 },
+            { QStringLiteral("message"),
+              QStringLiteral("%1 started on the GUI thread but did not finish within the "
+                             "dispatch budget plus grace window. Its effects may still land; "
+                             "do not treat this timeout as proof it did not execute.")
+                      .arg(method) },
+            { QStringLiteral("timeoutMs"), timeoutMs },
+            { QStringLiteral("graceMs"), graceMs },
+            { QStringLiteral("hints"), QJsonArray{
+                QStringLiteral("Further GUI-thread requests return session.gui_thread_busy until the started request finishes."),
+                QStringLiteral("When the target becomes responsive again, re-verify state with UI.query before acting."),
+            } },
+        } } },
+    };
+}
+
+static QJsonObject guiThreadBusyResult(const QString &pendingMethod, qint64 elapsedMs)
+{
+    return {
+        { QStringLiteral("ok"), false },
+        { QStringLiteral("diagnostics"), QJsonArray{ QJsonObject{
+            { QStringLiteral("id"), QStringLiteral("session.gui_thread_busy") },
+            { QStringLiteral("severity"), QStringLiteral("error") },
+            { QStringLiteral("confidence"), 1.0 },
+            { QStringLiteral("message"),
+              QStringLiteral("A previous %1 request is still executing on the GUI thread "
+                             "(%2 ms so far). New GUI-thread requests are refused until it "
+                             "finishes so QmlAgent operations cannot interleave.")
+                      .arg(pendingMethod).arg(elapsedMs) },
+            { QStringLiteral("hints"), QJsonArray{
+                QStringLiteral("Retry after the target becomes responsive; the pending request's result was already reported as outcome unknown."),
+                QStringLiteral("If the target stays busy, it is blocked in application code; check Log.getEntries or relaunch it."),
+            } },
+        } } },
+    };
+}
+
 static QJsonObject serviceDestroyedResult()
 {
     return {
@@ -161,6 +208,52 @@ static QJsonObject serviceDestroyedResult()
     };
 }
 
+// One GUI-thread request runs at a time. The debug thread is the only caller
+// and blocks for the request's whole lifetime (dispatch budget + grace), so
+// two QmlAgent operations can never interleave on the GUI thread — even
+// though implementations pump nested event loops (UI.waitFor, input settle).
+// A request that outlives the grace window is recorded here; until it
+// finishes, further GUI-thread requests are refused with
+// session.gui_thread_busy instead of being queued behind it.
+
+struct GuiCallState
+{
+    // Queued -> Started (GUI thread claims it) or Queued -> Cancelled (debug
+    // thread gave up before it started). CAS makes the claim race-free: a
+    // cancelled request provably never ran; a started one provably runs to
+    // completion.
+    enum Phase : int { Queued = 0, Started = 1, Cancelled = 2 };
+
+    QSemaphore done;
+    QJsonObject result;
+    std::atomic_int phase{ Queued };
+    std::atomic_bool completed{ false };
+    QElapsedTimer queuedAt;
+};
+
+struct AbandonedGuiCall
+{
+    QSharedPointer<GuiCallState> state;
+    QString method;
+};
+
+// Debug-thread-only state (one debug connection, serial message handling).
+static AbandonedGuiCall s_abandonedGuiCall;
+static QString s_dispatchingMethod;
+
+// Extra wait once a request has started on the GUI thread. Most over-budget
+// requests are application handlers that run slightly long; waiting them out
+// returns the true result instead of a timeout whose outcome is unknown.
+static int guiDispatchStartedGraceMs()
+{
+    static const int graceMs = []() {
+        bool ok = false;
+        const int value = qEnvironmentVariableIntValue("QMLAGENT_GUI_DISPATCH_GRACE_MS", &ok);
+        return ok && value > 0 ? value : 5000;
+    }();
+    return graceMs;
+}
+
 template <typename Fn>
 static QJsonObject runOnGuiThreadBlocking(Fn &&fn, int timeoutMs = GuiThreadDispatchTimeoutMs)
 {
@@ -168,40 +261,55 @@ static QJsonObject runOnGuiThreadBlocking(Fn &&fn, int timeoutMs = GuiThreadDisp
     if (!application || QThread::currentThread() == application->thread())
         return fn();
 
-    struct GuiCallState
-    {
-        QSemaphore done;
-        QJsonObject result;
-        std::atomic_bool cancelled = false;
-        std::atomic_bool started = false;
-    };
+    if (s_abandonedGuiCall.state) {
+        if (!s_abandonedGuiCall.state->completed.load(std::memory_order_acquire))
+            return guiThreadBusyResult(s_abandonedGuiCall.method,
+                                       s_abandonedGuiCall.state->queuedAt.elapsed());
+        s_abandonedGuiCall = {};
+    }
 
     const auto state = QSharedPointer<GuiCallState>::create();
+    state->queuedAt.start();
     if (!QMetaObject::invokeMethod(application, [state, fn = std::forward<Fn>(fn)]() mutable {
-            if (state->cancelled.load(std::memory_order_acquire)) {
+            int expected = GuiCallState::Queued;
+            if (!state->phase.compare_exchange_strong(expected, GuiCallState::Started,
+                                                      std::memory_order_acq_rel)) {
                 state->done.release();
                 return;
             }
-            state->started.store(true, std::memory_order_release);
             state->result = fn();
+            state->completed.store(true, std::memory_order_release);
             state->done.release();
         }, Qt::QueuedConnection)) {
         QJsonObject result = guiThreadTimeoutResult(timeoutMs);
         result.insert(QStringLiteral("queued"), false);
+        result.insert(QStringLiteral("outcome"), QStringLiteral("not_executed"));
         return result;
     }
 
-    if (!state->done.tryAcquire(1, timeoutMs)) {
-        const bool alreadyStarted = state->started.load(std::memory_order_acquire);
-        state->cancelled.store(true, std::memory_order_release);
+    if (state->done.tryAcquire(1, timeoutMs))
+        return state->result;
+
+    int expected = GuiCallState::Queued;
+    if (state->phase.compare_exchange_strong(expected, GuiCallState::Cancelled,
+                                             std::memory_order_acq_rel)) {
+        // The GUI thread never picked the request up; it provably did not and
+        // will not execute.
         QJsonObject result = guiThreadTimeoutResult(timeoutMs);
         result.insert(QStringLiteral("queued"), true);
-        result.insert(QStringLiteral("cancelledIfNotStarted"), true);
-        result.insert(QStringLiteral("alreadyStarted"), alreadyStarted);
+        result.insert(QStringLiteral("outcome"), QStringLiteral("not_executed"));
         return result;
     }
 
-    return state->result;
+    // The request is executing. Wait it out within the grace window so the
+    // client gets the real result rather than a timeout with unknown effects.
+    const int graceMs = guiDispatchStartedGraceMs();
+    if (state->done.tryAcquire(1, graceMs))
+        return state->result;
+
+    s_abandonedGuiCall.state = state;
+    s_abandonedGuiCall.method = s_dispatchingMethod;
+    return guiThreadOutcomeUnknownResult(timeoutMs, graceMs, s_dispatchingMethod);
 }
 
 QQmlAgentService::QQmlAgentService(QObject *parent)
@@ -297,6 +405,7 @@ QJsonObject QQmlAgentService::dispatch(const QString &method, const QJsonObject 
 {
     const QPointer<QQmlAgentService> self(this);
     const int dispatchTimeoutMs = guiDispatchTimeoutMsFor(method, params);
+    s_dispatchingMethod = method;
 
     if (method == QLatin1String("Session.getInfo"))
         return sessionInfo();
