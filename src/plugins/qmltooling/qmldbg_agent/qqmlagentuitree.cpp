@@ -1008,27 +1008,6 @@ static QJsonArray collectQueryMatches(const SelectorCriteria &criteria,
                                       const TreeBuildOptions &resultOptions,
                                       int resultDepth, int maxMatches, bool *truncated);
 
-static QJsonObject pruneToSelector(const QJsonObject &node, const QString &kind, const QString &value)
-{
-    const bool matched = nodeMatchesSelector(node, kind, value);
-    QJsonArray prunedChildren;
-    const QJsonArray children = node.value(QStringLiteral("children")).toArray();
-    for (const QJsonValue &child : children) {
-        const QJsonObject prunedChild = pruneToSelector(child.toObject(), kind, value);
-        if (!prunedChild.isEmpty())
-            prunedChildren.append(prunedChild);
-    }
-
-    if (!matched && prunedChildren.isEmpty())
-        return {};
-
-    QJsonObject pruned = node;
-    pruned.insert(QStringLiteral("children"), matched ? children : prunedChildren);
-    if (!matched)
-        pruned.insert(QStringLiteral("matchAncestor"), true);
-    return pruned;
-}
-
 static QJsonObject pruneToSelector(const QJsonObject &node, const SelectorCriteria &criteria)
 {
     const bool matched = nodeMatchesSelector(node, criteria);
@@ -1236,23 +1215,6 @@ static bool nodeMatchesSelector(const QJsonObject &node, const SelectorCriteria 
         return false;
     }
     return true;
-}
-
-static void collectMatches(const QJsonObject &node, const QString &kind, const QString &value,
-                           int maxMatches, bool *truncated, QJsonArray *matches)
-{
-    if (nodeMatchesSelector(node, kind, value)) {
-        if (maxMatches >= 0 && matches->size() >= maxMatches) {
-            if (truncated)
-                *truncated = true;
-        } else {
-            matches->append(node);
-        }
-    }
-
-    const QJsonArray children = node.value(QStringLiteral("children")).toArray();
-    for (const QJsonValue &child : children)
-        collectMatches(child.toObject(), kind, value, maxMatches, truncated, matches);
 }
 
 static void collectMatches(const QJsonObject &node, const SelectorCriteria &criteria,
