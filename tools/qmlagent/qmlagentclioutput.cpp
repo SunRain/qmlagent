@@ -265,7 +265,7 @@ void printObjectSummary(const QJsonObject &object)
                                               ? result.value(QStringLiteral("data")).toString().toLatin1().size()
                                               : result.value(QStringLiteral("byteSize")).toInt()));
         if (result.value(QStringLiteral("dataOmitted")).toBool(false))
-            printSummaryLine(stream, QStringLiteral("screenshot data omitted; pass --out file.png to write PNG bytes, or --include-data/omitData:false only when base64 fallback bytes are needed"));
+            printSummaryLine(stream, QStringLiteral("screenshot data omitted; pass --out file.png to write PNG bytes, or --include-data/includeData:true only when base64 fallback bytes are needed"));
     }
 
     const QJsonArray windows = result.value(QStringLiteral("windows")).toArray();

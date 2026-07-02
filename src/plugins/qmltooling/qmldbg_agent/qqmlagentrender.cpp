@@ -126,20 +126,24 @@ QJsonObject QQmlAgentRender::captureScreenshot(const QJsonObject &params)
     };
     if (params.contains(QStringLiteral("region")))
         result.insert(QStringLiteral("region"), params.value(QStringLiteral("region")).toObject());
-    if (params.value(QStringLiteral("omitData")).toBool(false)) {
+    // Base64 bytes are excluded unless explicitly requested with
+    // includeData:true (same flag as the MCP tool). Blowing image bytes into
+    // an agent's context by default is the exact failure this evidence
+    // surface is designed to prevent.
+    if (params.value(QStringLiteral("includeData")).toBool(false)) {
+        result.insert(QStringLiteral("data"), QString::fromLatin1(png.toBase64()));
+    } else {
         result.insert(QStringLiteral("dataOmitted"), true);
         result.insert(QStringLiteral("nextHints"), QJsonArray{
             QJsonObject{
                 { QStringLiteral("method"), QStringLiteral("Render.captureScreenshot") },
                 { QStringLiteral("params"), QJsonObject{
                     { QStringLiteral("windowId"), windowId },
-                    { QStringLiteral("omitData"), false },
+                    { QStringLiteral("includeData"), true },
                 } },
                 { QStringLiteral("reason"), QStringLiteral("Request PNG data only when visual fallback evidence is needed.") },
             },
         });
-    } else {
-        result.insert(QStringLiteral("data"), QString::fromLatin1(png.toBase64()));
     }
     return result;
 }

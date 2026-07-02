@@ -1019,7 +1019,9 @@ static void printCallHelp()
            << "  qmlagentctl call Input.scrollIntoView --params '{\"selector\":\"id=\\\"saveButton\\\"\"}'\n"
            << "  qmlagentctl call UI.waitFor --params '{\"selector\":\"id=\\\"popup\\\"\",\"until\":{\"state\":\"found\"}}'\n"
            << "  qmlagentctl call Diagnostics.analyzeBinding --params '{\"selector\":\"id=\\\"panel\\\"\",\"property\":\"x\"}'\n"
-           << "  qmlagentctl call Render.captureScreenshot --params '{\"omitData\":true,\"scale\":0.5}'\n";
+           << "  qmlagentctl call Render.captureScreenshot --params '{\"scale\":0.5}'\n"
+           << "\nScreenshot data is omitted by default; pass includeData:true only when\n"
+           << "PNG bytes are needed, and prefer scale/region to bound them.\n";
 }
 
 static void printMethodsHelp(const QStringList &methods, const QString &origin,
@@ -1356,8 +1358,8 @@ static int runCtlSubcommand(const QStringList &arguments)
                     return fail(QStringLiteral("--window-id must be a positive integer."));
                 params.insert(QStringLiteral("windowId"), id);
             }
-            params.insert(QStringLiteral("omitData"),
-                          screenshotOutputPath.isEmpty() && !screenshotKeepDataInOutput);
+            params.insert(QStringLiteral("includeData"),
+                          !screenshotOutputPath.isEmpty() || screenshotKeepDataInOutput);
         }
 
         controlMethod = QStringLiteral("QmlAgent.request");
@@ -2132,8 +2134,8 @@ private:
                 targetParams->insert(QStringLiteral("scale"), arguments.value(QStringLiteral("scale")));
             if (arguments.contains(QStringLiteral("region")))
                 targetParams->insert(QStringLiteral("region"), arguments.value(QStringLiteral("region")));
-            const bool includeData = arguments.value(QStringLiteral("includeData")).toBool(false);
-            targetParams->insert(QStringLiteral("omitData"), !includeData);
+            targetParams->insert(QStringLiteral("includeData"),
+                                 arguments.value(QStringLiteral("includeData")).toBool(false));
             return true;
         }
         if (name == QLatin1String("qmlagent.source_resolve")) {

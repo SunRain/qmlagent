@@ -3595,6 +3595,9 @@ void QmlAgentIntegrationTest::renderCaptureScreenshot()
             .value(QStringLiteral("windowId")).toInt(-1);
     QVERIFY(mainWindowId > 0);
 
+    // Default call carries metadata only: base64 bytes must be requested
+    // explicitly with includeData:true so raw protocol users cannot blow
+    // image bytes into an agent context by accident.
     const auto response = invoke(&client, QStringLiteral("Render.captureScreenshot"), {
         { QStringLiteral("windowId"), mainWindowId },
     }, 2,
@@ -3611,13 +3614,22 @@ void QmlAgentIntegrationTest::renderCaptureScreenshot()
              QStringLiteral("fallback-visual"));
     QCOMPARE(result.value(QStringLiteral("primaryOracle")).toBool(true), false);
     QCOMPARE(result.value(QStringLiteral("structuredFirst")).toBool(false), true);
+    QCOMPARE(result.value(QStringLiteral("dataOmitted")).toBool(false), true);
+    QVERIFY2(!result.contains(QStringLiteral("data")),
+             qPrintable(QString::fromUtf8(QJsonDocument(result).toJson())));
 
+    const auto includeDataResponse = invoke(&client, QStringLiteral("Render.captureScreenshot"), {
+        { QStringLiteral("windowId"), mainWindowId },
+        { QStringLiteral("includeData"), true },
+    }, 12, &errorMessage);
+    QVERIFY2(includeDataResponse.has_value(), qPrintable(errorMessage));
     const QByteArray png = QByteArray::fromBase64(
-            result.value(QStringLiteral("data")).toString().toLatin1());
+            includeDataResponse->value(QStringLiteral("result")).toObject()
+                    .value(QStringLiteral("data")).toString().toLatin1());
     QVERIFY2(png.startsWith(QByteArray::fromHex("89504e470d0a1a0a")), png.constData());
 
     const auto metadataResponse = invoke(&client, QStringLiteral("Render.captureScreenshot"), {
-        { QStringLiteral("omitData"), true },
+        { QStringLiteral("includeData"), false },
         { QStringLiteral("windowId"), mainWindowId },
     }, 3, &errorMessage);
     QVERIFY2(metadataResponse.has_value(), qPrintable(errorMessage));
@@ -3632,7 +3644,6 @@ void QmlAgentIntegrationTest::renderCaptureScreenshot()
              QStringLiteral("fallback-visual"));
 
     const auto scaledRegionResponse = invoke(&client, QStringLiteral("Render.captureScreenshot"), {
-        { QStringLiteral("omitData"), true },
         { QStringLiteral("windowId"), mainWindowId },
         { QStringLiteral("scale"), 0.5 },
         { QStringLiteral("region"), QJsonObject{

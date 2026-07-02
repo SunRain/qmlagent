@@ -235,7 +235,7 @@ Raw protocol escape hatch:
 "$QT_BIN/qmlagentctl" call UI.query --params '{"selector":"id=\"saveButton\""}'
 "$QT_BIN/qmlagentctl" call UI.queryMany --params '{"queries":[{"selector":"id=\"saveButton\""},{"selector":"id=\"statusLabel\"","properties":["text"]}]}'
 "$QT_BIN/qmlagentctl" call Input.scrollIntoView --params '{"selector":"id=\"saveButton\""}'
-"$QT_BIN/qmlagentctl" call Render.captureScreenshot --params '{"omitData":true,"scale":0.5}'
+"$QT_BIN/qmlagentctl" call Render.captureScreenshot --params '{"scale":0.5}'
 ```
 
 ## Visual Evidence
