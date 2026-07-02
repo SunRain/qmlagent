@@ -107,6 +107,16 @@ static QJsonArray actionabilityFailureHints(const QString &reason)
             },
         };
     }
+    if (reason == QLatin1String("blocked_by_modal_popup")) {
+        return {
+            QJsonObject{
+                { QStringLiteral("method"), QStringLiteral("Input.dismissPopup") },
+                { QStringLiteral("tool"), QStringLiteral("qmlagent.input_dismiss_popup") },
+                { QStringLiteral("cli"), QStringLiteral("qmlagentctl dismiss-popup") },
+                { QStringLiteral("reason"), QStringLiteral("Close the topmost popup, then retry the input. If the popup is the intended target, interact with its controls instead.") },
+            },
+        };
+    }
     return {};
 }
 
