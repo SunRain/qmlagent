@@ -97,8 +97,8 @@ QJsonArray toolList()
     };
 
     return {
-        tool(QStringLiteral("qmlagent.connect_tcp"),
-             QStringLiteral("Attach this MCP server directly to a manually launched Qt app using -qmljsdebugger=port:<port>,host:<host>,services:QmlAgent. Prefer qmlagent-launcher, which avoids TCP ports. If direct TCP is required, pass the exact port from the launch command; when omitted the client uses a deterministic per-user fallback port. Do not scan or pre-bind ports. If the app was started with qmlagent-launcher preview <Main.qml> or qmlagent-launcher app <executable>, request/response tools auto-route through the launcher and this attach step is not needed. Use direct attach for streamed subscriptions such as qmlagent.ui_subscribe and qmlagent.log_enable."),
+        tool(QStringLiteral("qmlagent_connect_tcp"),
+             QStringLiteral("Attach this MCP server directly to a manually launched Qt app using -qmljsdebugger=port:<port>,host:<host>,services:QmlAgent. Prefer qmlagent-launcher, which avoids TCP ports. If direct TCP is required, pass the exact port from the launch command; when omitted the client uses a deterministic per-user fallback port. Do not scan or pre-bind ports. If the app was started with qmlagent-launcher preview <Main.qml> or qmlagent-launcher app <executable>, request/response tools auto-route through the launcher and this attach step is not needed. Use direct attach for streamed subscriptions such as qmlagent_ui_subscribe and qmlagent_log_enable."),
              schema({
                  { QStringLiteral("host"), QJsonObject{
                      { QStringLiteral("type"), QStringLiteral("string") },
@@ -113,8 +113,8 @@ QJsonArray toolList()
                      { QStringLiteral("description"), QStringLiteral("Connection timeout in milliseconds.") },
                  } },
              })),
-        tool(QStringLiteral("qmlagent.connect_local_socket"),
-             QStringLiteral("Attach this MCP server directly to a manually launched Qt app using -qmljsdebugger=file:<path>,services:QmlAgent. If the app was started with qmlagent-launcher preview <Main.qml> or qmlagent-launcher app <executable>, request/response tools auto-route through the launcher and this attach step is not needed. Use direct attach for streamed subscriptions such as qmlagent.ui_subscribe and qmlagent.log_enable."),
+        tool(QStringLiteral("qmlagent_connect_local_socket"),
+             QStringLiteral("Attach this MCP server directly to a manually launched Qt app using -qmljsdebugger=file:<path>,services:QmlAgent. If the app was started with qmlagent-launcher preview <Main.qml> or qmlagent-launcher app <executable>, request/response tools auto-route through the launcher and this attach step is not needed. Use direct attach for streamed subscriptions such as qmlagent_ui_subscribe and qmlagent_log_enable."),
              schema({
                  { QStringLiteral("path"), QJsonObject{
                      { QStringLiteral("type"), QStringLiteral("string") },
@@ -125,27 +125,27 @@ QJsonArray toolList()
                      { QStringLiteral("description"), QStringLiteral("Connection timeout in milliseconds.") },
                  } },
              }, { QStringLiteral("path") })),
-        tool(QStringLiteral("qmlagent.disconnect"),
+        tool(QStringLiteral("qmlagent_disconnect"),
              QStringLiteral("Detach from the current QmlAgent target. Use before relaunching or switching target processes."),
              schema({})),
-        tool(QStringLiteral("qmlagent.target_status"),
-             QStringLiteral("Start here. Return whether this MCP server is directly attached and whether a qmlagent-launcher gateway is available for automatic request/response routing. If a single qmlagent-launcher session exists, qmlagent.ui_query, qmlagent.ui_query_many, qmlagent.input_click, qmlagent.input_scroll_into_view, qmlagent.ui_wait_for, qmlagent.preview_reload, and workflow tools work without qmlagent.connect_tcp/connect_local_socket. Direct attach is still required for streamed subscriptions."),
+        tool(QStringLiteral("qmlagent_target_status"),
+             QStringLiteral("Start here. Return whether this MCP server is directly attached and whether a qmlagent-launcher gateway is available for automatic request/response routing. If a single qmlagent-launcher session exists, qmlagent_ui_query, qmlagent_ui_query_many, qmlagent_input_click, qmlagent_input_scroll_into_view, qmlagent_ui_wait_for, qmlagent_preview_reload, and workflow tools work without qmlagent_connect_tcp/connect_local_socket. Direct attach is still required for streamed subscriptions."),
              schema({})),
-        tool(QStringLiteral("qmlagent.launcher_status"),
-             QStringLiteral("Discover qmlagent-launcher sessions in the current workspace. If exactly one live session exists, target-backed request/response MCP tools auto-route through it. The result names the exact launch form and whether qmlagent.preview_reload is supported."),
+        tool(QStringLiteral("qmlagent_launcher_status"),
+             QStringLiteral("Discover qmlagent-launcher sessions in the current workspace. If exactly one live session exists, target-backed request/response MCP tools auto-route through it. The result names the exact launch form and whether qmlagent_preview_reload is supported."),
              schema({})),
-        tool(QStringLiteral("qmlagent.preview_reload"),
+        tool(QStringLiteral("qmlagent_preview_reload"),
              QStringLiteral("Reload the root QML file for a session started exactly with qmlagent-launcher preview <Main.qml>. This does not work for qmlagent-launcher app <executable> sessions; those must rebuild/relaunch unless the app owns its own reload boundary."),
              schema({
                  { QStringLiteral("timeoutMs"), QJsonObject{
                      { QStringLiteral("type"), QStringLiteral("integer") },
-                     { QStringLiteral("description"), QStringLiteral("Reload timeout in milliseconds. Verify the new state separately with qmlagent.ui_wait_for or qmlagent.ui_query.") },
+                     { QStringLiteral("description"), QStringLiteral("Reload timeout in milliseconds. Verify the new state separately with qmlagent_ui_wait_for or qmlagent_ui_query.") },
                  } },
              })),
-        tool(QStringLiteral("qmlagent.launcher_stop"),
+        tool(QStringLiteral("qmlagent_launcher_stop"),
              QStringLiteral("Stop the current qmlagent-launcher session discovered in the workspace. Use this to close a preview or application session without manual process killing."),
              schema({})),
-        tool(QStringLiteral("qmlagent.ui_get_tree"),
+        tool(QStringLiteral("qmlagent_ui_get_tree"),
              QStringLiteral("Get a projected Qt Quick UI tree. Keep fields/maxNodes bounded unless full evidence is required. If selector is supplied without depth, the adapter searches the full tree and returns the matched branch."),
              schema({
                  { QStringLiteral("depth"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("integer") } } },
@@ -157,8 +157,8 @@ QJsonArray toolList()
                  { QStringLiteral("maxNodes"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("integer") } } },
                  { QStringLiteral("collapseRepeated"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("boolean") } } },
              })),
-        tool(QStringLiteral("qmlagent.ui_query"),
-             QStringLiteral("Query nodes by stable QmlAgent selector. Defaults to verbosity=\"summary\" to protect agent context; ask for verbosity=\"full\" only when omittedFields/nextHints say deeper node evidence is needed. Prefer selector over nodeId across restarts. For repeated delegates, try id/objectName plus index such as id=\"boxRect\" index=0 before adding objectName or using session-local nodeId. Requested properties are returned even when fields is projected. If a single qmlagent-launcher session exists, this routes through the launcher automatically; no direct attach is needed. Use this to find selectors before qmlagent.input_drag, qmlagent.input_wheel, qmlagent.ui_wait_for, or qmlagent.workflow_click_and_wait."),
+        tool(QStringLiteral("qmlagent_ui_query"),
+             QStringLiteral("Query nodes by stable QmlAgent selector. Defaults to verbosity=\"summary\" to protect agent context; ask for verbosity=\"full\" only when omittedFields/nextHints say deeper node evidence is needed. Prefer selector over nodeId across restarts. For repeated delegates, try id/objectName plus index such as id=\"boxRect\" index=0 before adding objectName or using session-local nodeId. Requested properties are returned even when fields is projected. If a single qmlagent-launcher session exists, this routes through the launcher automatically; no direct attach is needed. Use this to find selectors before qmlagent_input_drag, qmlagent_input_wheel, qmlagent_ui_wait_for, or qmlagent_workflow_click_and_wait."),
              schema({
                  { QStringLiteral("selector"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("string") } } },
                  { QStringLiteral("includeSource"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("boolean") } } },
@@ -174,8 +174,8 @@ QJsonArray toolList()
                      } },
                  } },
              }, { QStringLiteral("selector") })),
-        tool(QStringLiteral("qmlagent.ui_query_many"),
-             QStringLiteral("Batch verification reads: run several UI.query selectors in one round trip and return results aligned with the queries array. Prefer this over sequential qmlagent.ui_query calls when checking multiple nodes/properties after an action; it saves agent round trips and tokens. Per-entry fields mirror qmlagent.ui_query; defaults applies shared options to entries that omit them. At most 50 queries per batch. Defaults to verbosity=\"summary\"."),
+        tool(QStringLiteral("qmlagent_ui_query_many"),
+             QStringLiteral("Batch verification reads: run several UI.query selectors in one round trip and return results aligned with the queries array. Prefer this over sequential qmlagent_ui_query calls when checking multiple nodes/properties after an action; it saves agent round trips and tokens. Per-entry fields mirror qmlagent_ui_query; defaults applies shared options to entries that omit them. At most 50 queries per batch. Defaults to verbosity=\"summary\"."),
              schema({
                  { QStringLiteral("queries"), QJsonObject{
                      { QStringLiteral("type"), QStringLiteral("array") },
@@ -205,8 +205,8 @@ QJsonArray toolList()
                      } },
                  } },
              }, { QStringLiteral("queries") })),
-        tool(QStringLiteral("qmlagent.ui_wait_for"),
-             QStringLiteral("Agent-first semantic wait tool. Wait until a selector is found/notFound or one selected node property satisfies a predicate. Use after qmlagent.input_click, qmlagent.input_drag, qmlagent.input_wheel, loaders, popups, Drawer/Menu/Popup/Dialog transitions, and animated controls instead of sleeps, retry loops, screenshots, or frame-count tuning. For Qt Quick Controls popups, wait for generic popup evidence such as type=\"QQuickPopupItem\" or a visible popup property, then query the popup contents; style implementations may expose choices as ItemDelegate rather than MenuItem. If qmlagent.workflow_click_and_wait is not visible in lazy native-tool discovery, use qmlagent.input_click followed by this qmlagent.ui_wait_for tool. Timeout results include targeted nextHints for UI.query/Diagnostics follow-up."),
+        tool(QStringLiteral("qmlagent_ui_wait_for"),
+             QStringLiteral("Agent-first semantic wait tool. Wait until a selector is found/notFound or one selected node property satisfies a predicate. Use after qmlagent_input_click, qmlagent_input_drag, qmlagent_input_wheel, loaders, popups, Drawer/Menu/Popup/Dialog transitions, and animated controls instead of sleeps, retry loops, screenshots, or frame-count tuning. For Qt Quick Controls popups, wait for generic popup evidence such as type=\"QQuickPopupItem\" or a visible popup property, then query the popup contents; style implementations may expose choices as ItemDelegate rather than MenuItem. If qmlagent_workflow_click_and_wait is not visible in lazy native-tool discovery, use qmlagent_input_click followed by this qmlagent_ui_wait_for tool. Timeout results include targeted nextHints for UI.query/Diagnostics follow-up."),
              schema({
                  { QStringLiteral("selector"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("string") } } },
                  { QStringLiteral("until"), waitUntilSchema() },
@@ -215,13 +215,13 @@ QJsonArray toolList()
                      { QStringLiteral("description"), QStringLiteral("Maximum wait in milliseconds. Defaults to the service default when omitted.") },
                  } },
              }, { QStringLiteral("selector"), QStringLiteral("until") })),
-        tool(QStringLiteral("qmlagent.ui_subscribe"),
+        tool(QStringLiteral("qmlagent_ui_subscribe"),
              QStringLiteral("Subscribe to coalesced QmlAgent UI.treeChanged events on this persistent connection."),
              schema({})),
-        tool(QStringLiteral("qmlagent.ui_unsubscribe"),
+        tool(QStringLiteral("qmlagent_ui_unsubscribe"),
              QStringLiteral("Unsubscribe from QmlAgent UI.treeChanged events on this persistent connection."),
              schema({})),
-        tool(QStringLiteral("qmlagent.diagnostics_analyze_tree"),
+        tool(QStringLiteral("qmlagent_diagnostics_analyze_tree"),
              QStringLiteral("Analyze the runtime tree for structured layout/input/log issues. Defaults to application repair scope. Use verbosity:\"summary\" for bounded agent-loop output; use evidence/full only when patch-ready detail is needed. Pass includeFrameworkIssues:true or issueScope:\"all\" when developing Qt Quick Controls/framework internals."),
              schema({
                  { QStringLiteral("includeInvisible"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("boolean") } } },
@@ -241,10 +241,10 @@ QJsonArray toolList()
                      } },
                  } },
              })),
-        tool(QStringLiteral("qmlagent.diagnostics_analyze_node"),
+        tool(QStringLiteral("qmlagent_diagnostics_analyze_node"),
              QStringLiteral("Analyze one node by selector or nodeId and return evidence-backed issues."),
              schema(withNodeRef({ { QStringLiteral("checks"), stringArray } }))),
-        tool(QStringLiteral("qmlagent.diagnostics_analyze_binding"),
+        tool(QStringLiteral("qmlagent_diagnostics_analyze_binding"),
              QStringLiteral("Resolve runtime binding provenance for one property. Use this when geometry/state looks computed: it reports active QQmlBinding or Qt bindable-property binding evidence, current value, source location, bounded source snippet, candidate identifier follow-up hints, currently captured dependency values when Qt exposes them, and bindable-property dependency summaries when values are not exposed. Start from result.assignmentSite: it is the ranked answer to \"which file:line do I edit to change this value\" for both live bindings and literal assignments; the provenance dossier is for verification. Source-token identifiers are hints, not dependency proof. This is structured repair evidence; it does not mutate the app."),
              schema(withNodeRef({
                  { QStringLiteral("property"), QJsonObject{
@@ -252,24 +252,24 @@ QJsonArray toolList()
                      { QStringLiteral("description"), QStringLiteral("Property to inspect, for example x, y, width, height, visible, enabled, text, or color.") },
                  } },
              }), { QStringLiteral("property") })),
-        tool(QStringLiteral("qmlagent.runtime_enable_mutation"),
-             QStringLiteral("Explicitly enable setup-only Runtime.* mutation commands for this QmlAgent debug session. Required before qmlagent.runtime_set_property or qmlagent.runtime_invoke_method."),
+        tool(QStringLiteral("qmlagent_runtime_enable_mutation"),
+             QStringLiteral("Explicitly enable setup-only Runtime.* mutation commands for this QmlAgent debug session. Required before qmlagent_runtime_set_property or qmlagent_runtime_invoke_method."),
              schema({
                  { QStringLiteral("enabled"), QJsonObject{
                      { QStringLiteral("type"), QStringLiteral("boolean") },
                      { QStringLiteral("description"), QStringLiteral("Defaults to true. Set false to disable Runtime.* mutation again.") },
                  } },
              })),
-        tool(QStringLiteral("qmlagent.input_click"),
-             QStringLiteral("Click one node through Qt synthetic input. A delivered click returns ok:true for input delivery only; settle.timedOut means no frame was observed before the settle timeout and is not semantic proof of failure. For transitions, Drawer/Menu/Popup/Dialog open-close, loaders, or async state, prefer qmlagent.workflow_click_and_wait; if that tool is not visible in lazy native-tool discovery, call qmlagent.input_click then qmlagent.ui_wait_for."),
+        tool(QStringLiteral("qmlagent_input_click"),
+             QStringLiteral("Click one node through Qt synthetic input. A delivered click returns ok:true for input delivery only; settle.timedOut means no frame was observed before the settle timeout and is not semantic proof of failure. For transitions, Drawer/Menu/Popup/Dialog open-close, loaders, or async state, prefer qmlagent_workflow_click_and_wait; if that tool is not visible in lazy native-tool discovery, call qmlagent_input_click then qmlagent_ui_wait_for."),
              schema(withNodeRef({
                  { QStringLiteral("settle"), QJsonObject{
                      { QStringLiteral("type"), QStringLiteral("object") },
                      { QStringLiteral("description"), QStringLiteral("Optional settle tuning such as timeoutMs. This affects frame-settle evidence only, not semantic verification.") },
                  } },
              }))),
-        tool(QStringLiteral("qmlagent.input_long_press"),
-             QStringLiteral("Long-press one node through Qt synthetic mouse input as one atomic action: press, hold, release cleanup, then settle. Use for MouseArea.onPressAndHold, context actions, press-and-hold affordances, and mobile-style UI. Prefer this over manual qmlagent.input_mouse press/wait/release sequences so agents do not leave a held button after interruption. Verify post-action state with qmlagent.ui_wait_for or use qmlagent.workflow_long_press_and_wait."),
+        tool(QStringLiteral("qmlagent_input_long_press"),
+             QStringLiteral("Long-press one node through Qt synthetic mouse input as one atomic action: press, hold, release cleanup, then settle. Use for MouseArea.onPressAndHold, context actions, press-and-hold affordances, and mobile-style UI. Prefer this over manual qmlagent_input_mouse press/wait/release sequences so agents do not leave a held button after interruption. Verify post-action state with qmlagent_ui_wait_for or use qmlagent_workflow_long_press_and_wait."),
              schema(withNodeRef({
                  { QStringLiteral("holdMs"), QJsonObject{
                      { QStringLiteral("type"), QStringLiteral("integer") },
@@ -282,8 +282,8 @@ QJsonArray toolList()
                  } },
                  { QStringLiteral("modifiers"), stringArray },
              }))),
-        tool(QStringLiteral("qmlagent.input_wheel"),
-             QStringLiteral("Dispatch one wheel event at a selector/node center through Qt synthetic input. Use negative deltaY to scroll down in normal Qt Quick Flickable/ListView/GridView/TableView/TreeView/ScrollView content. After scrolling, verify with qmlagent.ui_wait_for or qmlagent.ui_query."),
+        tool(QStringLiteral("qmlagent_input_wheel"),
+             QStringLiteral("Dispatch one wheel event at a selector/node center through Qt synthetic input. Use negative deltaY to scroll down in normal Qt Quick Flickable/ListView/GridView/TableView/TreeView/ScrollView content. After scrolling, verify with qmlagent_ui_wait_for or qmlagent_ui_query."),
              schema(withNodeRef({
                  { QStringLiteral("deltaX"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("integer") } } },
                  { QStringLiteral("deltaY"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("integer") } } },
@@ -297,13 +297,13 @@ QJsonArray toolList()
                  } },
                  { QStringLiteral("modifiers"), stringArray },
              }))),
-        tool(QStringLiteral("qmlagent.input_scroll_into_view"),
-             QStringLiteral("Scroll a selector/node into view by adjusting its ancestor Flickable/ListView content positions deterministically, then settle. Use when a click or read fails with center_outside_viewport on instantiated-but-clipped content. Rows a virtualized view has not created yet have no node to target: wheel toward them with qmlagent.input_wheel first, then re-query. Verify the final state with qmlagent.ui_query or qmlagent.ui_wait_for."),
+        tool(QStringLiteral("qmlagent_input_scroll_into_view"),
+             QStringLiteral("Scroll a selector/node into view by adjusting its ancestor Flickable/ListView content positions deterministically, then settle. Use when a click or read fails with center_outside_viewport on instantiated-but-clipped content. Rows a virtualized view has not created yet have no node to target: wheel toward them with qmlagent_input_wheel first, then re-query. Verify the final state with qmlagent_ui_query or qmlagent_ui_wait_for."),
              schema(withNodeRef({}))),
-        tool(QStringLiteral("qmlagent.input_focus"),
+        tool(QStringLiteral("qmlagent_input_focus"),
              QStringLiteral("Focus one QQuickItem by selector or nodeId for keyboard input."),
              schema(withNodeRef({}))),
-        tool(QStringLiteral("qmlagent.input_mouse"),
+        tool(QStringLiteral("qmlagent_input_mouse"),
              QStringLiteral("Dispatch one bounded mouse press/move/release event at a selector/node item point through Qt synthetic input. Use press/move/release sequences for drag verification."),
              schema(withNodeRef({
                  { QStringLiteral("type"), QJsonObject{
@@ -322,8 +322,8 @@ QJsonArray toolList()
                  } },
                  { QStringLiteral("modifiers"), stringArray },
              }), { QStringLiteral("type") })),
-        tool(QStringLiteral("qmlagent.input_drag"),
-             QStringLiteral("Drag one selector/node through Qt mouse input. Use for Slider, RangeSlider, Dial, splitters, handles, swipe gestures, and draggable controls. Provide item-local to:[x,y] or delta:[dx,dy]; the tool sends press, at least two moves, and release, then returns settle metadata. After animated drag state, verify with qmlagent.ui_wait_for or qmlagent.ui_query."),
+        tool(QStringLiteral("qmlagent_input_drag"),
+             QStringLiteral("Drag one selector/node through Qt mouse input. Use for Slider, RangeSlider, Dial, splitters, handles, swipe gestures, and draggable controls. Provide item-local to:[x,y] or delta:[dx,dy]; the tool sends press, at least two moves, and release, then returns settle metadata. After animated drag state, verify with qmlagent_ui_wait_for or qmlagent_ui_query."),
              schema(withNodeRef({
                  { QStringLiteral("from"), QJsonObject{
                      { QStringLiteral("type"), QStringLiteral("array") },
@@ -341,7 +341,7 @@ QJsonArray toolList()
                  { QStringLiteral("button"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("string") } } },
                  { QStringLiteral("modifiers"), stringArray },
              }))),
-        tool(QStringLiteral("qmlagent.input_touch"),
+        tool(QStringLiteral("qmlagent_input_touch"),
              QStringLiteral("Dispatch one bounded touch begin/update/end/cancel event at selector/node item-local points through Qt synthetic input. Use explicit point ids and states for multipoint sequences."),
              schema(withNodeRef({
                  { QStringLiteral("type"), QJsonObject{
@@ -377,7 +377,7 @@ QJsonArray toolList()
                  } },
                  { QStringLiteral("modifiers"), stringArray },
              }), { QStringLiteral("type"), QStringLiteral("points") })),
-        tool(QStringLiteral("qmlagent.input_key"),
+        tool(QStringLiteral("qmlagent_input_key"),
              QStringLiteral("Dispatch a key event, optionally targeting selector/nodeId first."),
              schema(withNodeRef({
                  { QStringLiteral("key"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("string") } } },
@@ -393,18 +393,18 @@ QJsonArray toolList()
                  } },
                  { QStringLiteral("modifiers"), stringArray },
              }))),
-        tool(QStringLiteral("qmlagent.input_type_text"),
-             QStringLiteral("Type text through synthetic key input, optionally targeting selector/nodeId first. This appends/replaces according to the target's normal cursor/selection state; use qmlagent.input_clear_text first when you need an empty field. If click-to-focus fails, call qmlagent.input_focus on the same selector/nodeId, then retry qmlagent.input_type_text; focus_failed results include nextHints."),
+        tool(QStringLiteral("qmlagent_input_type_text"),
+             QStringLiteral("Type text through synthetic key input, optionally targeting selector/nodeId first. This appends/replaces according to the target's normal cursor/selection state; use qmlagent_input_clear_text first when you need an empty field. If click-to-focus fails, call qmlagent_input_focus on the same selector/nodeId, then retry qmlagent_input_type_text; focus_failed results include nextHints."),
              schema(withNodeRef({ { QStringLiteral("text"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("string") } } } }),
                     { QStringLiteral("text") })),
-        tool(QStringLiteral("qmlagent.input_clear_text"),
-             QStringLiteral("Clear a TextInput/TextField/TextArea-style target through the same Input.typeText path: focus target, select existing text when available, then delete through Qt key input. Use qmlagent.input_type_text afterward to enter new text, and verify final text/state with qmlagent.ui_query or qmlagent.ui_wait_for."),
+        tool(QStringLiteral("qmlagent_input_clear_text"),
+             QStringLiteral("Clear a TextInput/TextField/TextArea-style target through the same Input.typeText path: focus target, select existing text when available, then delete through Qt key input. Use qmlagent_input_type_text afterward to enter new text, and verify final text/state with qmlagent_ui_query or qmlagent_ui_wait_for."),
              schema(withNodeRef({}))),
-        tool(QStringLiteral("qmlagent.input_dismiss_popup"),
-             QStringLiteral("Close the topmost visible popup (Menu/Dialog/Drawer/Popup) generically when Esc or a dismiss button is not reliable, unblocking further input. Pass all=true to close every stacked popup. The result reports popupCountBefore/remainingPopupCount so you can confirm the popup actually closed; a popup.not_dismissed diagnostic means it survived (reopened from a binding, or a non-Popup overlay). Verify follow-up state with qmlagent.ui_query or qmlagent.ui_wait_for."),
+        tool(QStringLiteral("qmlagent_input_dismiss_popup"),
+             QStringLiteral("Close the topmost visible popup (Menu/Dialog/Drawer/Popup) generically when Esc or a dismiss button is not reliable, unblocking further input. Pass all=true to close every stacked popup. The result reports popupCountBefore/remainingPopupCount so you can confirm the popup actually closed; a popup.not_dismissed diagnostic means it survived (reopened from a binding, or a non-Popup overlay). Verify follow-up state with qmlagent_ui_query or qmlagent_ui_wait_for."),
              schema({ { QStringLiteral("all"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("boolean") } } } })),
-        tool(QStringLiteral("qmlagent.workflow_click"),
-             QStringLiteral("Click a target selector and verify an immediate expected state in one dispatcher-owned workflow report. Use verbosity=\"summary\" for normal agent loops; use full only when deep evidence is needed. For Drawer/Menu/Popup/Dialog transitions, loaders, animated controls, or delayed availability, use qmlagent.workflow_click_and_wait instead of this qmlagent.workflow_click tool."),
+        tool(QStringLiteral("qmlagent_workflow_click"),
+             QStringLiteral("Click a target selector and verify an immediate expected state in one dispatcher-owned workflow report. Use verbosity=\"summary\" for normal agent loops; use full only when deep evidence is needed. For Drawer/Menu/Popup/Dialog transitions, loaders, animated controls, or delayed availability, use qmlagent_workflow_click_and_wait instead of this qmlagent_workflow_click tool."),
              schema({
                  { QStringLiteral("selector"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("string") } } },
                  { QStringLiteral("expectSelector"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("string") } } },
@@ -420,8 +420,8 @@ QJsonArray toolList()
                      } },
                  } },
              }, { QStringLiteral("selector"), QStringLiteral("expectSelector"), QStringLiteral("expect") })),
-        tool(QStringLiteral("qmlagent.workflow_click_and_wait"),
-             QStringLiteral("Agent-first compressed workflow for transitions/popups: click a target selector through Qt input, subscribe to UI events, then UI.waitFor a semantic predicate in one report. Prefer this over qmlagent.input_click plus manual sleeps/retries for Drawer/Menu/Popup transitions, animations, loaders, and post-click async state. For Controls popups, prefer waiting for type=\"QQuickPopupItem\" or another generic popup/container selector, then query visible ItemDelegate/MenuItem/etc. contents because platform styles do not expose one uniform item type."),
+        tool(QStringLiteral("qmlagent_workflow_click_and_wait"),
+             QStringLiteral("Agent-first compressed workflow for transitions/popups: click a target selector through Qt input, subscribe to UI events, then UI.waitFor a semantic predicate in one report. Prefer this over qmlagent_input_click plus manual sleeps/retries for Drawer/Menu/Popup transitions, animations, loaders, and post-click async state. For Controls popups, prefer waiting for type=\"QQuickPopupItem\" or another generic popup/container selector, then query visible ItemDelegate/MenuItem/etc. contents because platform styles do not expose one uniform item type."),
              schema({
                  { QStringLiteral("selector"), QJsonObject{
                      { QStringLiteral("type"), QStringLiteral("string") },
@@ -441,8 +441,8 @@ QJsonArray toolList()
                      } },
                  } },
              }, { QStringLiteral("selector"), QStringLiteral("waitSelector"), QStringLiteral("until") })),
-        tool(QStringLiteral("qmlagent.workflow_long_press_and_wait"),
-             QStringLiteral("Agent-first compressed workflow for press-and-hold UI: long-press a target selector, release safely, then UI.waitFor a semantic predicate in one report. Use for MouseArea.onPressAndHold, context menus, mobile-style alternate actions, and hidden affordances. Prefer this over qmlagent.input_mouse press + sleep + release."),
+        tool(QStringLiteral("qmlagent_workflow_long_press_and_wait"),
+             QStringLiteral("Agent-first compressed workflow for press-and-hold UI: long-press a target selector, release safely, then UI.waitFor a semantic predicate in one report. Use for MouseArea.onPressAndHold, context menus, mobile-style alternate actions, and hidden affordances. Prefer this over qmlagent_input_mouse press + sleep + release."),
              schema({
                  { QStringLiteral("selector"), QJsonObject{
                      { QStringLiteral("type"), QStringLiteral("string") },
@@ -466,7 +466,7 @@ QJsonArray toolList()
                      } },
                  } },
              }, { QStringLiteral("selector"), QStringLiteral("waitSelector"), QStringLiteral("until") })),
-        tool(QStringLiteral("qmlagent.workflow_key"),
+        tool(QStringLiteral("qmlagent_workflow_key"),
              QStringLiteral("Dispatch a key to a target selector and verify expected state in one dispatcher-owned workflow report. Expectations support property=value, numeric comparisons, and string operators such as text contains \"google\" / text startsWith \"https://\". Use verbosity=\"summary\" for normal agent loops; use full only when deep evidence is needed."),
              schema({
                  { QStringLiteral("selector"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("string") } } },
@@ -484,15 +484,15 @@ QJsonArray toolList()
                      } },
                  } },
              }, { QStringLiteral("selector"), QStringLiteral("key"), QStringLiteral("expectSelector"), QStringLiteral("expect") })),
-        tool(QStringLiteral("qmlagent.runtime_set_property"),
-             QStringLiteral("White-box setup only: set one QObject/QML property by selector or nodeId. Requires qmlagent.runtime_enable_mutation first. Verify final behavior with UI/Input/Diagnostics/Log evidence; do not use as proof that a user can interact with the UI."),
+        tool(QStringLiteral("qmlagent_runtime_set_property"),
+             QStringLiteral("White-box setup only: set one QObject/QML property by selector or nodeId. Requires qmlagent_runtime_enable_mutation first. Verify final behavior with UI/Input/Diagnostics/Log evidence; do not use as proof that a user can interact with the UI."),
              schema(withNodeRef({
                  { QStringLiteral("property"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("string") } } },
                  { QStringLiteral("value"), QJsonObject{ { QStringLiteral("description"), QStringLiteral("Primitive JSON value, or simple primitive array/object when QVariant conversion is trivial.") } } },
                  { QStringLiteral("settle"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("object") } } },
              }), { QStringLiteral("property"), QStringLiteral("value") })),
-        tool(QStringLiteral("qmlagent.runtime_invoke_method"),
-             QStringLiteral("White-box setup only: invoke a public slot/Q_INVOKABLE by selector or nodeId with primitive args. Requires qmlagent.runtime_enable_mutation first. Verify final behavior with UI/Input/Diagnostics/Log evidence; do not use as proof that a control is clickable."),
+        tool(QStringLiteral("qmlagent_runtime_invoke_method"),
+             QStringLiteral("White-box setup only: invoke a public slot/Q_INVOKABLE by selector or nodeId with primitive args. Requires qmlagent_runtime_enable_mutation first. Verify final behavior with UI/Input/Diagnostics/Log evidence; do not use as proof that a control is clickable."),
              schema(withNodeRef({
                  { QStringLiteral("method"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("string") } } },
                  { QStringLiteral("args"), QJsonObject{
@@ -501,18 +501,18 @@ QJsonArray toolList()
                  } },
                  { QStringLiteral("settle"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("object") } } },
              }), { QStringLiteral("method") })),
-        tool(QStringLiteral("qmlagent.log_enable"),
+        tool(QStringLiteral("qmlagent_log_enable"),
              QStringLiteral("Enable QmlAgent log events on this persistent connection."),
              schema({ { QStringLiteral("replayBuffered"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("boolean") } } } })),
-        tool(QStringLiteral("qmlagent.log_get_entries"),
+        tool(QStringLiteral("qmlagent_log_get_entries"),
              QStringLiteral("Return buffered QML/log entries. Log.enable is not required first. Use sinceTimestamp from the previous result's nextSinceTimestamp to fetch only new entries in long agent loops."),
              schema({
                  { QStringLiteral("level"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("string") } } },
                  { QStringLiteral("sinceTimestamp"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("number") } } },
                  { QStringLiteral("maxEntries"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("integer") } } },
              })),
-        tool(QStringLiteral("qmlagent.render_capture_screenshot"),
-             QStringLiteral("Fallback visual evidence: capture a QQuickWindow screenshot. Do not use this as the primary oracle. First use qmlagent.ui_query/ui_get_tree, diagnostics, logs, source, and input/workflow tools; request screenshot data only when structured evidence is insufficient or the task is explicitly visual. By default this returns metadata without PNG data. Set includeData:true only when image bytes are needed, and prefer scale/region to avoid large base64 payloads."),
+        tool(QStringLiteral("qmlagent_render_capture_screenshot"),
+             QStringLiteral("Fallback visual evidence: capture a QQuickWindow screenshot. Do not use this as the primary oracle. First use qmlagent_ui_query/ui_get_tree, diagnostics, logs, source, and input/workflow tools; request screenshot data only when structured evidence is insufficient or the task is explicitly visual. By default this returns metadata without PNG data. Set includeData:true only when image bytes are needed, and prefer scale/region to avoid large base64 payloads."),
              schema({
                  { QStringLiteral("windowId"), QJsonObject{
                      { QStringLiteral("type"), QStringLiteral("integer") },
@@ -531,7 +531,7 @@ QJsonArray toolList()
                      { QStringLiteral("description"), QStringLiteral("Optional window-local logical-pixel crop: {x,y,width,height}. Useful for fallback visual evidence around one UI area.") },
                  } },
              })),
-        tool(QStringLiteral("qmlagent.source_resolve"),
+        tool(QStringLiteral("qmlagent_source_resolve"),
              QStringLiteral("Resolve one node back to source with method/confidence/limitations."),
              schema(withNodeRef({}))),
     };

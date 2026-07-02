@@ -81,7 +81,7 @@ QJsonObject summarizedQueryResult(const QJsonObject &result)
         } },
         { QStringLiteral("nextHints"), QJsonArray{
             QJsonObject{
-                { QStringLiteral("tool"), QStringLiteral("qmlagent.ui_query") },
+                { QStringLiteral("tool"), QStringLiteral("qmlagent_ui_query") },
                 { QStringLiteral("arguments"), QJsonObject{
                     { QStringLiteral("verbosity"), QStringLiteral("full") },
                 } },
@@ -173,7 +173,7 @@ QJsonObject summarizedWorkflowReport(const QJsonObject &report)
                 { QStringLiteral("reason"), QStringLiteral("Retrieve full target/before/after/event evidence.") },
             },
             QJsonObject{
-                { QStringLiteral("tool"), QStringLiteral("qmlagent.ui_query") },
+                { QStringLiteral("tool"), QStringLiteral("qmlagent_ui_query") },
                 { QStringLiteral("arguments"), QJsonObject{
                     { QStringLiteral("selector"), report.contains(QStringLiteral("waitSelector"))
                             ? report.value(QStringLiteral("waitSelector"))

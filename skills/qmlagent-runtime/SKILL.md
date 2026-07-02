@@ -16,7 +16,7 @@ their descriptions for exact parameters.
 2. Build the target with QML debugging enabled:
    `target_compile_definitions(myapp PRIVATE QT_QML_DEBUG)` in its CMake.
 3. Prefer `qmlagent-launcher` for all agent-owned sessions.
-4. After launch, call `qmlagent.target_status` first when native MCP tools are
+4. After launch, call `qmlagent_target_status` first when native MCP tools are
    available.
 
 If the app prints `Debugging has not been enabled`, the target lacks that
@@ -40,7 +40,7 @@ Preview sessions can reload. After editing the root QML file or a file it
 loads, request reload through native MCP:
 
 ```txt
-qmlagent.preview_reload
+qmlagent_preview_reload
 ```
 
 or through shell fallback:
@@ -60,21 +60,26 @@ reload QML. That split is intentional and user-visible.
 Do not start `qmlagent-mcp` manually inside the task. It should be registered
 with the agent runtime before the session starts.
 
+Tool naming: MCP tools are `qmlagent_*` (underscores throughout, no dots, so
+no agent runtime needs to rename them). Raw protocol names (`UI.query`,
+`UI.waitFor`) are the JSON-RPC methods behind the tools, reachable via
+`qmlagentctl call`.
+
 After `qmlagent-launcher` starts exactly one live session, request/response MCP
-tools route through it automatically. Do not call `qmlagent.connect_tcp` or
-`qmlagent.connect_local_socket` for launcher-owned request/response work.
+tools route through it automatically. Do not call `qmlagent_connect_tcp` or
+`qmlagent_connect_local_socket` for launcher-owned request/response work.
 Direct attach is only for manually launched targets or streamed subscriptions
 that require a persistent attached client.
 
 Normal order:
 
 ```txt
-qmlagent.target_status
+qmlagent_target_status
 launch or confirm one qmlagent-launcher session
-qmlagent.ui_query / qmlagent.ui_get_tree
-qmlagent.ui_query_many for multiple verification reads
-qmlagent.diagnostics_* / qmlagent.source_resolve / qmlagent.log_get_entries
-qmlagent.input_* / qmlagent.workflow_*
+qmlagent_ui_query / qmlagent_ui_get_tree
+qmlagent_ui_query_many for multiple verification reads
+qmlagent_diagnostics_* / qmlagent_source_resolve / qmlagent_log_get_entries
+qmlagent_input_* / qmlagent_workflow_*
 patch source
 rebuild/relaunch app session, or preview_reload for preview session
 verify with runtime evidence
@@ -142,7 +147,7 @@ supported.
   automation-only `objectName`. For anonymous or repeated components without
   ids, use the `sourceLocation` selector the query result suggests.
 - When geometry/state looks computed, call
-  `qmlagent.diagnostics_analyze_binding` for the property. Treat classic
+  `qmlagent_diagnostics_analyze_binding` for the property. Treat classic
   `QQmlBinding` dependency values as runtime evidence. Treat
   `candidateIdentifiers` as low-confidence follow-up hints that must be
   verified through `UI.query`, diagnostics, or source evidence before patching.
@@ -151,23 +156,23 @@ supported.
   expression, source location, and dependency limitations.
 - Use `UI.waitFor` or workflow tools for transitions, popups, loaders,
   animations, and async post-action state. Do not use sleeps.
-- Use `qmlagent.ui_query_many` or shell `qmlagentctl query-many` for multiple
+- Use `qmlagent_ui_query_many` or shell `qmlagentctl query-many` for multiple
   selectors/properties after one action instead of serial query calls.
 - If click/read evidence reports `center_outside_viewport`, use
-  `qmlagent.input_scroll_into_view` or shell `qmlagentctl scroll-into-view`,
+  `qmlagent_input_scroll_into_view` or shell `qmlagentctl scroll-into-view`,
   then retry the action/query. For not-yet-instantiated virtualized rows,
   wheel toward the row and re-query first.
 - If a popup blocks input or a click reports `blocked_by_modal_popup`, and
-  Escape or a dismiss button is unreliable, use `qmlagent.input_dismiss_popup`
+  Escape or a dismiss button is unreliable, use `qmlagent_input_dismiss_popup`
   (or shell `qmlagentctl dismiss-popup`, `--all` for stacked popups). It
   reports `remainingPopupCount` so you can confirm the popup actually closed.
   Note menus and dialogs toggle: re-clicking the trigger while open closes it.
-- To enter new text into an occupied field, use native `qmlagent.input_clear_text` followed by
-  `qmlagent.input_type_text`, or shell `qmlagentctl clear-text` followed by
+- To enter new text into an occupied field, use native `qmlagent_input_clear_text` followed by
+  `qmlagent_input_type_text`, or shell `qmlagentctl clear-text` followed by
   `qmlagentctl type`, then verify with `UI.query` or `UI.waitFor`.
 - Use input/workflow results plus `UI.query`, diagnostics, logs, or source
   evidence as proof. Runtime mutation is setup-only.
-- Use `qmlagent.input_long_press` or `qmlagent.workflow_long_press_and_wait`
+- Use `qmlagent_input_long_press` or `qmlagent_workflow_long_press_and_wait`
   for press-and-hold UI. Do not hand-roll mousePress + sleep + mouseRelease
   unless debugging the input primitive itself.
 - If QML fails to load, inspect logs/status first. A dead process cannot answer

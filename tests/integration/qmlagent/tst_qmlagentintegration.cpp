@@ -4133,16 +4133,16 @@ Window {
     };
 
     writeRequest(mcpRequest(1, QStringLiteral("initialize")));
-    writeRequest(mcpToolCall(2, QStringLiteral("qmlagent.target_status"), {}));
-    writeRequest(mcpToolCall(3, QStringLiteral("qmlagent.ui_query"), {
+    writeRequest(mcpToolCall(2, QStringLiteral("qmlagent_target_status"), {}));
+    writeRequest(mcpToolCall(3, QStringLiteral("qmlagent_ui_query"), {
         { QStringLiteral("selector"), QStringLiteral("type=\"Rectangle\"") },
     }));
     QByteArray output = waitForOutput(&client, QByteArrayLiteral("\"id\":3"));
-    writeRequest(mcpToolCall(4, QStringLiteral("qmlagent.preview_reload"), {
+    writeRequest(mcpToolCall(4, QStringLiteral("qmlagent_preview_reload"), {
         { QStringLiteral("timeoutMs"), RequestTimeoutMs },
     }));
     output += waitForOutput(&client, QByteArrayLiteral("\"id\":4"));
-    writeRequest(mcpToolCall(5, QStringLiteral("qmlagent.ui_subscribe"), {}));
+    writeRequest(mcpToolCall(5, QStringLiteral("qmlagent_ui_subscribe"), {}));
     output += waitForOutput(&client, QByteArrayLiteral("\"id\":5"));
     writeRequest(mcpRequest(6, QStringLiteral("shutdown")));
     output += waitForOutput(&client, QByteArrayLiteral("\"id\":6"));
@@ -4212,59 +4212,59 @@ void QmlAgentIntegrationTest::referenceClientMcpPersistentMode()
 
     writeRequest(mcpRequest(1, QStringLiteral("initialize")));
     writeRequest(mcpRequest(2, QStringLiteral("tools/list")));
-    writeRequest(mcpToolCall(3, QStringLiteral("qmlagent.target_status"), {}));
-    writeRequest(mcpToolCall(4, QStringLiteral("qmlagent.ui_query"), {
+    writeRequest(mcpToolCall(3, QStringLiteral("qmlagent_target_status"), {}));
+    writeRequest(mcpToolCall(4, QStringLiteral("qmlagent_ui_query"), {
         { QStringLiteral("selector"), QStringLiteral("objectName=\"smoke.content\"") },
     }));
-    writeRequest(mcpToolCall(5, QStringLiteral("qmlagent.connect_tcp"), {
+    writeRequest(mcpToolCall(5, QStringLiteral("qmlagent_connect_tcp"), {
         { QStringLiteral("host"), QStringLiteral("127.0.0.1") },
         { QStringLiteral("port"), smoke.port() },
         { QStringLiteral("timeoutMs"), RequestTimeoutMs },
     }));
-    writeRequest(mcpToolCall(6, QStringLiteral("qmlagent.ui_query"), {
+    writeRequest(mcpToolCall(6, QStringLiteral("qmlagent_ui_query"), {
         { QStringLiteral("selector"), QStringLiteral("objectName=\"smoke.content\"") },
         { QStringLiteral("properties"), QJsonArray{ QStringLiteral("color") } },
     }));
-    writeRequest(mcpToolCall(7, QStringLiteral("qmlagent.source_resolve"), {
+    writeRequest(mcpToolCall(7, QStringLiteral("qmlagent_source_resolve"), {
         { QStringLiteral("selector"), QStringLiteral("objectName=\"smoke.content\"") },
     }));
-    writeRequest(mcpToolCall(23, QStringLiteral("qmlagent.runtime_enable_mutation"), {}));
-    writeRequest(mcpToolCall(20, QStringLiteral("qmlagent.runtime_set_property"), {
+    writeRequest(mcpToolCall(23, QStringLiteral("qmlagent_runtime_enable_mutation"), {}));
+    writeRequest(mcpToolCall(20, QStringLiteral("qmlagent_runtime_set_property"), {
         { QStringLiteral("selector"), QStringLiteral("id=\"runtimeProbe\"") },
         { QStringLiteral("property"), QStringLiteral("label") },
         { QStringLiteral("value"), QStringLiteral("mcp") },
     }));
-    writeRequest(mcpToolCall(21, QStringLiteral("qmlagent.runtime_invoke_method"), {
+    writeRequest(mcpToolCall(21, QStringLiteral("qmlagent_runtime_invoke_method"), {
         { QStringLiteral("selector"), QStringLiteral("id=\"runtimeProbe\"") },
         { QStringLiteral("method"), QStringLiteral("setRuntimeCounter") },
         { QStringLiteral("args"), QJsonArray{ 3 } },
     }));
-    writeRequest(mcpToolCall(15, QStringLiteral("qmlagent.ui_get_tree"), {
+    writeRequest(mcpToolCall(15, QStringLiteral("qmlagent_ui_get_tree"), {
         { QStringLiteral("selector"), QStringLiteral("objectName=\"smoke.dynamic\"") },
     }));
-    writeRequest(mcpToolCall(8, QStringLiteral("qmlagent.workflow_key"), {
+    writeRequest(mcpToolCall(8, QStringLiteral("qmlagent_workflow_key"), {
         { QStringLiteral("selector"), QStringLiteral("objectName=\"smoke.textInput\"") },
         { QStringLiteral("key"), QStringLiteral("m") },
         { QStringLiteral("expectSelector"), QStringLiteral("objectName=\"smoke.textInput\"") },
         { QStringLiteral("expect"), QStringLiteral("text=\"m\"") },
     }));
-    writeRequest(mcpToolCall(26, QStringLiteral("qmlagent.workflow_key"), {
+    writeRequest(mcpToolCall(26, QStringLiteral("qmlagent_workflow_key"), {
         { QStringLiteral("selector"), QStringLiteral("objectName=\"smoke.textInput\"") },
         { QStringLiteral("key"), QStringLiteral("n") },
         { QStringLiteral("expectSelector"), QStringLiteral("objectName=\"smoke.textInput\"") },
         { QStringLiteral("expect"), QStringLiteral("text contains \"mn\"") },
     }));
-    writeRequest(mcpToolCall(9, QStringLiteral("qmlagent.log_enable"), {
+    writeRequest(mcpToolCall(9, QStringLiteral("qmlagent_log_enable"), {
         { QStringLiteral("replayBuffered"), true },
     }));
 
     QByteArray output = waitForOutput(&client, QByteArrayLiteral("\"id\":26"));
     output += waitForOutput(&client, QByteArrayLiteral("\"method\":\"Log.entryAdded\""));
-    writeRequest(mcpToolCall(22, QStringLiteral("qmlagent.target_status"), {}));
+    writeRequest(mcpToolCall(22, QStringLiteral("qmlagent_target_status"), {}));
     output += waitForOutput(&client, QByteArrayLiteral("\"id\":22"));
 
-    writeRequest(mcpToolCall(10, QStringLiteral("qmlagent.ui_subscribe"), {}));
-    writeRequest(mcpToolCall(11, QStringLiteral("qmlagent.workflow_click"), {
+    writeRequest(mcpToolCall(10, QStringLiteral("qmlagent_ui_subscribe"), {}));
+    writeRequest(mcpToolCall(11, QStringLiteral("qmlagent_workflow_click"), {
         { QStringLiteral("selector"), QStringLiteral("objectName=\"smoke.clickArea\"") },
         { QStringLiteral("expectSelector"), QStringLiteral("objectName=\"smoke.clicked\"") },
         { QStringLiteral("expect"), QStringLiteral("objectName=\"smoke.clicked\"") },
@@ -4272,7 +4272,7 @@ void QmlAgentIntegrationTest::referenceClientMcpPersistentMode()
     }));
     output += waitForOutput(&client, QByteArrayLiteral("\"id\":11"));
 
-    writeRequest(mcpToolCall(24, QStringLiteral("qmlagent.workflow_click_and_wait"), {
+    writeRequest(mcpToolCall(24, QStringLiteral("qmlagent_workflow_click_and_wait"), {
         { QStringLiteral("selector"), QStringLiteral("objectName=\"smoke.secondClickArea\"") },
         { QStringLiteral("waitSelector"), QStringLiteral("objectName=\"smoke.clicked\"") },
         { QStringLiteral("until"), QJsonObject{
@@ -4283,7 +4283,7 @@ void QmlAgentIntegrationTest::referenceClientMcpPersistentMode()
     }));
     output += waitForOutput(&client, QByteArrayLiteral("\"id\":24"));
 
-    writeRequest(mcpToolCall(25, QStringLiteral("qmlagent.workflow_click_and_wait"), {
+    writeRequest(mcpToolCall(25, QStringLiteral("qmlagent_workflow_click_and_wait"), {
         { QStringLiteral("selector"), QStringLiteral("objectName=\"smoke.secondClickArea\"") },
         { QStringLiteral("waitSelector"), QStringLiteral("id=\"indexedDelegateProbe\"") },
         { QStringLiteral("until"), QJsonObject{
@@ -4296,22 +4296,22 @@ void QmlAgentIntegrationTest::referenceClientMcpPersistentMode()
     }));
     output += waitForOutput(&client, QByteArrayLiteral("\"id\":25"));
 
-    writeRequest(mcpToolCall(12, QStringLiteral("qmlagent.input_click"), {
+    writeRequest(mcpToolCall(12, QStringLiteral("qmlagent_input_click"), {
         { QStringLiteral("selector"), QStringLiteral("objectName=\"smoke.secondClickArea\"") },
     }));
     output += waitForOutput(&client, QByteArrayLiteral("\"id\":12"));
     output += waitForOutput(&client, QByteArrayLiteral("\"method\":\"UI.treeChanged\""));
-    writeRequest(mcpToolCall(16, QStringLiteral("qmlagent.input_wheel"), {
+    writeRequest(mcpToolCall(16, QStringLiteral("qmlagent_input_wheel"), {
         { QStringLiteral("selector"), QStringLiteral("id=\"smokeFlickable\"") },
         { QStringLiteral("deltaY"), -120 },
     }));
     output += waitForOutput(&client, QByteArrayLiteral("\"id\":16"));
-    writeRequest(mcpToolCall(17, QStringLiteral("qmlagent.input_drag"), {
+    writeRequest(mcpToolCall(17, QStringLiteral("qmlagent_input_drag"), {
         { QStringLiteral("selector"), QStringLiteral("id=\"smokeDragCommandArea\"") },
         { QStringLiteral("to"), QJsonArray{ 90, 10 } },
     }));
     output += waitForOutput(&client, QByteArrayLiteral("\"id\":17"));
-    writeRequest(mcpToolCall(18, QStringLiteral("qmlagent.input_touch"), {
+    writeRequest(mcpToolCall(18, QStringLiteral("qmlagent_input_touch"), {
         { QStringLiteral("selector"), QStringLiteral("id=\"smokeTouchArea\"") },
         { QStringLiteral("type"), QStringLiteral("touchBegin") },
         { QStringLiteral("points"), QJsonArray{
@@ -4328,7 +4328,7 @@ void QmlAgentIntegrationTest::referenceClientMcpPersistentMode()
         } },
     }));
     output += waitForOutput(&client, QByteArrayLiteral("\"id\":18"));
-    writeRequest(mcpToolCall(19, QStringLiteral("qmlagent.input_touch"), {
+    writeRequest(mcpToolCall(19, QStringLiteral("qmlagent_input_touch"), {
         { QStringLiteral("selector"), QStringLiteral("id=\"smokeTouchArea\"") },
         { QStringLiteral("type"), QStringLiteral("touchEnd") },
         { QStringLiteral("points"), QJsonArray{
@@ -4345,7 +4345,7 @@ void QmlAgentIntegrationTest::referenceClientMcpPersistentMode()
         } },
     }));
     output += waitForOutput(&client, QByteArrayLiteral("\"id\":19"));
-    writeRequest(mcpToolCall(13, QStringLiteral("qmlagent.disconnect"), {}));
+    writeRequest(mcpToolCall(13, QStringLiteral("qmlagent_disconnect"), {}));
     output += waitForOutput(&client, QByteArrayLiteral("\"id\":13"));
     writeRequest(mcpRequest(14, QStringLiteral("shutdown")));
     output += waitForOutput(&client, QByteArrayLiteral("\"id\":14"));
@@ -4416,25 +4416,25 @@ void QmlAgentIntegrationTest::referenceClientMcpPersistentMode()
     bool sawWorkflowKey = false;
     for (const QJsonValue &toolValue : tools) {
         const QString name = toolValue.toObject().value(QStringLiteral("name")).toString();
-        sawUiQuery |= name == QLatin1String("qmlagent.ui_query");
-        sawUiWaitFor |= name == QLatin1String("qmlagent.ui_wait_for");
-        sawConnect |= name == QLatin1String("qmlagent.connect_tcp");
-        sawConnectLocalSocket |= name == QLatin1String("qmlagent.connect_local_socket");
-        sawStatus |= name == QLatin1String("qmlagent.target_status");
-        sawLogEnable |= name == QLatin1String("qmlagent.log_enable");
-        sawInputDrag |= name == QLatin1String("qmlagent.input_drag");
-        sawInputLongPress |= name == QLatin1String("qmlagent.input_long_press");
-        sawInputMouse |= name == QLatin1String("qmlagent.input_mouse");
-        sawInputTouch |= name == QLatin1String("qmlagent.input_touch");
-        sawInputWheel |= name == QLatin1String("qmlagent.input_wheel");
-        sawInputClearText |= name == QLatin1String("qmlagent.input_clear_text");
-        sawRuntimeEnableMutation |= name == QLatin1String("qmlagent.runtime_enable_mutation");
-        sawRuntimeSetProperty |= name == QLatin1String("qmlagent.runtime_set_property");
-        sawRuntimeInvokeMethod |= name == QLatin1String("qmlagent.runtime_invoke_method");
-        sawWorkflowClick |= name == QLatin1String("qmlagent.workflow_click");
-        sawWorkflowClickAndWait |= name == QLatin1String("qmlagent.workflow_click_and_wait");
-        sawWorkflowLongPressAndWait |= name == QLatin1String("qmlagent.workflow_long_press_and_wait");
-        sawWorkflowKey |= name == QLatin1String("qmlagent.workflow_key");
+        sawUiQuery |= name == QLatin1String("qmlagent_ui_query");
+        sawUiWaitFor |= name == QLatin1String("qmlagent_ui_wait_for");
+        sawConnect |= name == QLatin1String("qmlagent_connect_tcp");
+        sawConnectLocalSocket |= name == QLatin1String("qmlagent_connect_local_socket");
+        sawStatus |= name == QLatin1String("qmlagent_target_status");
+        sawLogEnable |= name == QLatin1String("qmlagent_log_enable");
+        sawInputDrag |= name == QLatin1String("qmlagent_input_drag");
+        sawInputLongPress |= name == QLatin1String("qmlagent_input_long_press");
+        sawInputMouse |= name == QLatin1String("qmlagent_input_mouse");
+        sawInputTouch |= name == QLatin1String("qmlagent_input_touch");
+        sawInputWheel |= name == QLatin1String("qmlagent_input_wheel");
+        sawInputClearText |= name == QLatin1String("qmlagent_input_clear_text");
+        sawRuntimeEnableMutation |= name == QLatin1String("qmlagent_runtime_enable_mutation");
+        sawRuntimeSetProperty |= name == QLatin1String("qmlagent_runtime_set_property");
+        sawRuntimeInvokeMethod |= name == QLatin1String("qmlagent_runtime_invoke_method");
+        sawWorkflowClick |= name == QLatin1String("qmlagent_workflow_click");
+        sawWorkflowClickAndWait |= name == QLatin1String("qmlagent_workflow_click_and_wait");
+        sawWorkflowLongPressAndWait |= name == QLatin1String("qmlagent_workflow_long_press_and_wait");
+        sawWorkflowKey |= name == QLatin1String("qmlagent_workflow_key");
     }
     QVERIFY2(sawUiQuery, output.constData());
     QVERIFY2(sawUiWaitFor, output.constData());
@@ -4464,11 +4464,11 @@ void QmlAgentIntegrationTest::referenceClientMcpPersistentMode()
             .value(QStringLiteral("result")).toObject()
             .value(QStringLiteral("structuredContent")).toObject();
     QCOMPARE(disconnectedStatus.value(QStringLiteral("attachTools")).toObject()
-                     .value(QStringLiteral("rawMcp")).toArray()
+                     .value(QStringLiteral("tools")).toArray()
                      .at(0).toString(),
-             QStringLiteral("qmlagent.connect_tcp"));
+             QStringLiteral("qmlagent_connect_tcp"));
     QVERIFY2(disconnectedStatus.value(QStringLiteral("nextStep")).toString()
-                     .contains(QStringLiteral("qmlagent.connect_tcp")),
+                     .contains(QStringLiteral("qmlagent_connect_tcp")),
              output.constData());
     QVERIFY2(responses.value(4).value(QStringLiteral("result")).toObject()
                      .value(QStringLiteral("isError")).toBool(),
@@ -4697,7 +4697,7 @@ void QmlAgentIntegrationTest::referenceClientMcpWorkflowReports()
 
         if (!writeRequest(mcpRequest(1, QStringLiteral("initialize"))))
             return { { QStringLiteral("error"), client.errorString() } };
-        if (!writeRequest(mcpToolCall(2, QStringLiteral("qmlagent.connect_tcp"), {
+        if (!writeRequest(mcpToolCall(2, QStringLiteral("qmlagent_connect_tcp"), {
                 { QStringLiteral("host"), QStringLiteral("127.0.0.1") },
                 { QStringLiteral("port"), fixture.port() },
                 { QStringLiteral("timeoutMs"), RequestTimeoutMs },
@@ -4711,7 +4711,7 @@ void QmlAgentIntegrationTest::referenceClientMcpWorkflowReports()
         };
         if (!verbosity.isEmpty())
             workflowArguments.insert(QStringLiteral("verbosity"), verbosity);
-        if (!writeRequest(mcpToolCall(3, QStringLiteral("qmlagent.workflow_click"),
+        if (!writeRequest(mcpToolCall(3, QStringLiteral("qmlagent_workflow_click"),
                                       workflowArguments))) {
             return { { QStringLiteral("error"), client.errorString() } };
         }
@@ -4818,7 +4818,7 @@ void QmlAgentIntegrationTest::referenceClientReportsSingleClientConflict()
     };
 
     writeRequest(mcpRequest(1, QStringLiteral("initialize")));
-    writeRequest(mcpToolCall(2, QStringLiteral("qmlagent.connect_tcp"), {
+    writeRequest(mcpToolCall(2, QStringLiteral("qmlagent_connect_tcp"), {
         { QStringLiteral("host"), QStringLiteral("127.0.0.1") },
         { QStringLiteral("port"), smoke.port() },
         { QStringLiteral("timeoutMs"), RequestTimeoutMs },
@@ -4843,7 +4843,7 @@ void QmlAgentIntegrationTest::referenceClientReportsSingleClientConflict()
     QVERIFY2(secondMcpClient.waitForStarted(), qPrintable(secondMcpClient.errorString()));
     secondMcpClient.write(compactObject(mcpRequest(1, QStringLiteral("initialize"))));
     secondMcpClient.write("\n");
-    secondMcpClient.write(compactObject(mcpToolCall(2, QStringLiteral("qmlagent.connect_tcp"), {
+    secondMcpClient.write(compactObject(mcpToolCall(2, QStringLiteral("qmlagent_connect_tcp"), {
         { QStringLiteral("host"), QStringLiteral("127.0.0.1") },
         { QStringLiteral("port"), smoke.port() },
         { QStringLiteral("timeoutMs"), 1000 },
@@ -4861,7 +4861,7 @@ void QmlAgentIntegrationTest::referenceClientReportsSingleClientConflict()
     QVERIFY2(conflictOutput.contains("Only one qmlagent-mcp gateway"),
              conflictOutput.constData());
 
-    writeRequest(mcpToolCall(3, QStringLiteral("qmlagent.disconnect"), {}));
+    writeRequest(mcpToolCall(3, QStringLiteral("qmlagent_disconnect"), {}));
     mcpOutput += waitForOutput(&mcpClient, QByteArrayLiteral("\"id\":3"));
     writeRequest(mcpRequest(4, QStringLiteral("shutdown")));
     mcpOutput += waitForOutput(&mcpClient, QByteArrayLiteral("\"id\":4"));
@@ -4902,7 +4902,7 @@ void QmlAgentIntegrationTest::referenceClientMcpRefusesExistingLocalSocketPath()
     };
 
     writeRequest(mcpRequest(1, QStringLiteral("initialize")));
-    writeRequest(mcpToolCall(2, QStringLiteral("qmlagent.connect_local_socket"), {
+    writeRequest(mcpToolCall(2, QStringLiteral("qmlagent_connect_local_socket"), {
         { QStringLiteral("path"), path },
         { QStringLiteral("timeoutMs"), 250 },
     }));
@@ -4958,16 +4958,16 @@ void QmlAgentIntegrationTest::referenceClientMcpConnectsLocalSocket()
     };
 
     writeRequest(mcpRequest(1, QStringLiteral("initialize")));
-    writeRequest(mcpToolCall(2, QStringLiteral("qmlagent.connect_local_socket"), {
+    writeRequest(mcpToolCall(2, QStringLiteral("qmlagent_connect_local_socket"), {
         { QStringLiteral("path"), socketName },
         { QStringLiteral("timeoutMs"), RequestTimeoutMs },
     }));
     QByteArray output = waitForOutput(&client, QByteArrayLiteral("\"id\":2"));
-    writeRequest(mcpToolCall(3, QStringLiteral("qmlagent.ui_query"), {
+    writeRequest(mcpToolCall(3, QStringLiteral("qmlagent_ui_query"), {
         { QStringLiteral("selector"), QStringLiteral("objectName=\"smoke.content\"") },
     }));
     output += waitForOutput(&client, QByteArrayLiteral("\"id\":3"));
-    writeRequest(mcpToolCall(4, QStringLiteral("qmlagent.disconnect"), {}));
+    writeRequest(mcpToolCall(4, QStringLiteral("qmlagent_disconnect"), {}));
     output += waitForOutput(&client, QByteArrayLiteral("\"id\":4"));
     writeRequest(mcpRequest(5, QStringLiteral("shutdown")));
     output += waitForOutput(&client, QByteArrayLiteral("\"id\":5"));

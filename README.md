@@ -136,7 +136,7 @@ Restart the agent session so the MCP server and skill are loaded.
 "$QT_BIN/qmlagentctl" reload-preview
 ```
 
-With MCP, preview sessions reload through `qmlagent.preview_reload`.
+With MCP, preview sessions reload through `qmlagent_preview_reload`.
 
 Manual launch:
 
@@ -152,9 +152,9 @@ If the app prints `Debugging has not been enabled`, rebuild it with
 ```
 1. Build the target if needed.
 2. Start it with qmlagent-launcher app ./myapp or preview Main.qml.
-3. Call qmlagent.target_status.
+3. Call qmlagent_target_status.
 4. If launcherGateway.available is true, call target-backed tools directly.
-5. Use qmlagent.connect_tcp / connect_local_socket only for manually launched
+5. Use qmlagent_connect_tcp / connect_local_socket only for manually launched
    targets or streamed subscriptions requiring direct persistent attach.
 ```
 
@@ -194,27 +194,27 @@ return `stableSelectorHints` naming better handles.
 ## Repair Loop
 
 ```
-inspect:   qmlagent.ui_query / qmlagent.ui_get_tree
-batch:     qmlagent.ui_query_many for multiple selectors/properties
-diagnose:  qmlagent.diagnostics_analyze_node / qmlagent.diagnostics_analyze_tree
-source:    qmlagent.source_resolve / qmlagent.diagnostics_analyze_binding
-act:       qmlagent.input_click / qmlagent.input_scroll_into_view / qmlagent.input_long_press / qmlagent.input_drag / qmlagent.input_wheel / qmlagent.input_clear_text / qmlagent.input_type_text
-wait:      qmlagent.ui_wait_for / qmlagent.workflow_click_and_wait
+inspect:   qmlagent_ui_query / qmlagent_ui_get_tree
+batch:     qmlagent_ui_query_many for multiple selectors/properties
+diagnose:  qmlagent_diagnostics_analyze_node / qmlagent_diagnostics_analyze_tree
+source:    qmlagent_source_resolve / qmlagent_diagnostics_analyze_binding
+act:       qmlagent_input_click / qmlagent_input_scroll_into_view / qmlagent_input_long_press / qmlagent_input_drag / qmlagent_input_wheel / qmlagent_input_clear_text / qmlagent_input_type_text
+wait:      qmlagent_ui_wait_for / qmlagent_workflow_click_and_wait
 verify:    UI / diagnostics / log evidence, not screenshots
 ```
 
 If a click or read reports `center_outside_viewport` for an instantiated but
-clipped target, call `qmlagent.input_scroll_into_view`, then retry the action
+clipped target, call `qmlagent_input_scroll_into_view`, then retry the action
 or query. For virtualized rows that do not have a node yet, wheel toward the
 row and query again first.
 
 Use workflow tools when action and verification belong together:
 
 ```
-qmlagent.workflow_click
-qmlagent.workflow_click_and_wait
-qmlagent.workflow_long_press_and_wait
-qmlagent.workflow_key
+qmlagent_workflow_click
+qmlagent_workflow_click_and_wait
+qmlagent_workflow_long_press_and_wait
+qmlagent_workflow_key
 ```
 
 Workflow expectations support equality, numeric comparisons, and bounded
@@ -225,7 +225,7 @@ text contains "google"
 text startsWith "https://"
 ```
 
-Use `qmlagent.diagnostics_analyze_binding` when geometry or state looks
+Use `qmlagent_diagnostics_analyze_binding` when geometry or state looks
 computed. The raw protocol method is `Diagnostics.analyzeBinding`.
 
 Runtime mutation tools exist only for setup and navigation and are disabled by
@@ -274,7 +274,7 @@ evidence. If a screenshot is needed, scale or region it, or write the PNG to
 disk:
 
 ```
-qmlagent.render_capture_screenshot(includeData=true, scale=0.5)
+qmlagent_render_capture_screenshot(includeData=true, scale=0.5)
 "$QT_BIN/qmlagentctl" screenshot --out fallback.png --scale 0.5
 ```
 

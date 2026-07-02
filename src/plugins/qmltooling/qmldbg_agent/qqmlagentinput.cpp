@@ -96,13 +96,13 @@ static QJsonArray actionabilityFailureHints(const QString &reason)
         return {
             QJsonObject{
                 { QStringLiteral("method"), QStringLiteral("Input.scrollIntoView") },
-                { QStringLiteral("tool"), QStringLiteral("qmlagent.input_scroll_into_view") },
+                { QStringLiteral("tool"), QStringLiteral("qmlagent_input_scroll_into_view") },
                 { QStringLiteral("cli"), QStringLiteral("qmlagentctl scroll-into-view '<selector>'") },
                 { QStringLiteral("reason"), QStringLiteral("Scroll instantiated clipped content into view, then retry the input or query.") },
             },
             QJsonObject{
                 { QStringLiteral("method"), QStringLiteral("Input.wheel") },
-                { QStringLiteral("tool"), QStringLiteral("qmlagent.input_wheel") },
+                { QStringLiteral("tool"), QStringLiteral("qmlagent_input_wheel") },
                 { QStringLiteral("reason"), QStringLiteral("For virtualized rows that have no node yet, wheel toward the row and re-query first.") },
             },
         };
@@ -111,7 +111,7 @@ static QJsonArray actionabilityFailureHints(const QString &reason)
         return {
             QJsonObject{
                 { QStringLiteral("method"), QStringLiteral("Input.dismissPopup") },
-                { QStringLiteral("tool"), QStringLiteral("qmlagent.input_dismiss_popup") },
+                { QStringLiteral("tool"), QStringLiteral("qmlagent_input_dismiss_popup") },
                 { QStringLiteral("cli"), QStringLiteral("qmlagentctl dismiss-popup") },
                 { QStringLiteral("reason"), QStringLiteral("Close the topmost popup, then retry the input. If the popup is the intended target, interact with its controls instead.") },
             },

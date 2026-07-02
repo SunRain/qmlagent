@@ -152,7 +152,7 @@ void tst_QQmlAgentInput::clickNodeFailureReasons()
         QCOMPARE(nextHints.at(0).toObject().value(QStringLiteral("method")).toString(),
                  QStringLiteral("Input.scrollIntoView"));
         QCOMPARE(nextHints.at(0).toObject().value(QStringLiteral("tool")).toString(),
-                 QStringLiteral("qmlagent.input_scroll_into_view"));
+                 QStringLiteral("qmlagent_input_scroll_into_view"));
         QVERIFY(nextHints.at(0).toObject().value(QStringLiteral("cli")).toString()
                         .contains(QStringLiteral("qmlagentctl scroll-into-view")));
     }

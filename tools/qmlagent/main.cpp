@@ -220,7 +220,7 @@ private:
         return QStringLiteral("QmlAgent target endpoint is already owned: %1.%2 "
                               "Only one qmlagent-mcp gateway may attach "
                               "to one Qt QML debug target. Use the existing MCP gateway, call "
-                              "qmlagent.disconnect on it, or relaunch the target before starting "
+                              "qmlagent_disconnect on it, or relaunch the target before starting "
                               "another %3 client.")
                 .arg(endpoint, owner, mode);
     }
@@ -1076,8 +1076,8 @@ static void printMethodsHelp(const QStringList &methods, const QString &origin,
            << "  UI.queryMany             batch several selector/property reads\n"
            << "  Input.scrollIntoView     recover from center_outside_viewport on clipped content\n"
            << "\nMCP/tool equivalents:\n"
-           << "  qmlagent.ui_query_many\n"
-           << "  qmlagent.input_scroll_into_view\n";
+           << "  qmlagent_ui_query_many\n"
+           << "  qmlagent_input_scroll_into_view\n";
 }
 
 static int runCtlSubcommand(const QStringList &arguments)
@@ -1785,18 +1785,18 @@ private:
     static bool mapWorkflowCall(const QString &name, const QJsonObject &arguments,
                                 PendingCall *call, QString *error)
     {
-        if (name != QLatin1String("qmlagent.workflow_click")
-                && name != QLatin1String("qmlagent.workflow_click_and_wait")
-                && name != QLatin1String("qmlagent.workflow_long_press_and_wait")
-                && name != QLatin1String("qmlagent.workflow_key")) {
+        if (name != QLatin1String("qmlagent_workflow_click")
+                && name != QLatin1String("qmlagent_workflow_click_and_wait")
+                && name != QLatin1String("qmlagent_workflow_long_press_and_wait")
+                && name != QLatin1String("qmlagent_workflow_key")) {
             return false;
         }
 
-        if (name == QLatin1String("qmlagent.workflow_click"))
+        if (name == QLatin1String("qmlagent_workflow_click"))
             call->kind = PendingCall::Kind::WorkflowClick;
-        else if (name == QLatin1String("qmlagent.workflow_click_and_wait"))
+        else if (name == QLatin1String("qmlagent_workflow_click_and_wait"))
             call->kind = PendingCall::Kind::WorkflowClickAndWait;
-        else if (name == QLatin1String("qmlagent.workflow_long_press_and_wait"))
+        else if (name == QLatin1String("qmlagent_workflow_long_press_and_wait"))
             call->kind = PendingCall::Kind::WorkflowLongPressAndWait;
         else
             call->kind = PendingCall::Kind::WorkflowKey;
@@ -1847,17 +1847,17 @@ private:
                             QString *targetMethod, QJsonObject *targetParams,
                             QString *error)
     {
-        if (name == QLatin1String("qmlagent.ui_get_tree")) {
+        if (name == QLatin1String("qmlagent_ui_get_tree")) {
             *targetMethod = QStringLiteral("UI.getTree");
             *targetParams = treeParams(arguments);
             return true;
         }
-        if (name == QLatin1String("qmlagent.ui_query")) {
+        if (name == QLatin1String("qmlagent_ui_query")) {
             *targetMethod = QStringLiteral("UI.query");
             *targetParams = queryParams(arguments);
             return true;
         }
-        if (name == QLatin1String("qmlagent.ui_query_many")) {
+        if (name == QLatin1String("qmlagent_ui_query_many")) {
             *targetMethod = QStringLiteral("UI.queryMany");
             const QJsonArray queries = arguments.value(QStringLiteral("queries")).toArray();
             if (queries.isEmpty()) {
@@ -1881,7 +1881,7 @@ private:
             *targetParams = { { QStringLiteral("queries"), mappedQueries } };
             return true;
         }
-        if (name == QLatin1String("qmlagent.ui_wait_for")) {
+        if (name == QLatin1String("qmlagent_ui_wait_for")) {
             *targetMethod = QStringLiteral("UI.waitFor");
             QString selector;
             if (!requireStringArgument(arguments, QStringLiteral("selector"), &selector, error))
@@ -1900,17 +1900,17 @@ private:
                                      arguments.value(QStringLiteral("timeoutMs")).toInt());
             return true;
         }
-        if (name == QLatin1String("qmlagent.ui_subscribe")) {
+        if (name == QLatin1String("qmlagent_ui_subscribe")) {
             *targetMethod = QStringLiteral("UI.subscribe");
             *targetParams = {};
             return true;
         }
-        if (name == QLatin1String("qmlagent.ui_unsubscribe")) {
+        if (name == QLatin1String("qmlagent_ui_unsubscribe")) {
             *targetMethod = QStringLiteral("UI.unsubscribe");
             *targetParams = {};
             return true;
         }
-        if (name == QLatin1String("qmlagent.diagnostics_analyze_tree")) {
+        if (name == QLatin1String("qmlagent_diagnostics_analyze_tree")) {
             *targetMethod = QStringLiteral("Diagnostics.analyzeTree");
             if (arguments.contains(QStringLiteral("includeInvisible")))
                 targetParams->insert(QStringLiteral("includeInvisible"),
@@ -1927,7 +1927,7 @@ private:
                 targetParams->insert(QStringLiteral("maxIssues"), arguments.value(QStringLiteral("maxIssues")));
             return true;
         }
-        if (name == QLatin1String("qmlagent.diagnostics_analyze_node")) {
+        if (name == QLatin1String("qmlagent_diagnostics_analyze_node")) {
             *targetMethod = QStringLiteral("Diagnostics.analyzeNode");
             *targetParams = nodeRef(arguments, error);
             if (!error->isEmpty())
@@ -1936,7 +1936,7 @@ private:
                 targetParams->insert(QStringLiteral("checks"), arguments.value(QStringLiteral("checks")));
             return true;
         }
-        if (name == QLatin1String("qmlagent.diagnostics_analyze_binding")) {
+        if (name == QLatin1String("qmlagent_diagnostics_analyze_binding")) {
             *targetMethod = QStringLiteral("Diagnostics.analyzeBinding");
             *targetParams = nodeRef(arguments, error);
             if (!error->isEmpty())
@@ -1947,7 +1947,7 @@ private:
             targetParams->insert(QStringLiteral("property"), property);
             return true;
         }
-        if (name == QLatin1String("qmlagent.runtime_enable_mutation")) {
+        if (name == QLatin1String("qmlagent_runtime_enable_mutation")) {
             *targetMethod = QStringLiteral("Session.configure");
             *targetParams = {
                 { QStringLiteral("runtimeMutation"),
@@ -1955,14 +1955,14 @@ private:
             };
             return true;
         }
-        if (name == QLatin1String("qmlagent.input_click")) {
+        if (name == QLatin1String("qmlagent_input_click")) {
             *targetMethod = QStringLiteral("Input.clickNode");
             *targetParams = nodeRef(arguments, error);
             if (arguments.contains(QStringLiteral("settle")))
                 targetParams->insert(QStringLiteral("settle"), arguments.value(QStringLiteral("settle")));
             return error->isEmpty();
         }
-        if (name == QLatin1String("qmlagent.input_long_press")) {
+        if (name == QLatin1String("qmlagent_input_long_press")) {
             *targetMethod = QStringLiteral("Input.longPressNode");
             *targetParams = nodeRef(arguments, error);
             if (!error->isEmpty())
@@ -1977,7 +1977,7 @@ private:
             }
             return true;
         }
-        if (name == QLatin1String("qmlagent.input_wheel")) {
+        if (name == QLatin1String("qmlagent_input_wheel")) {
             *targetMethod = QStringLiteral("Input.wheel");
             *targetParams = nodeRef(arguments, error);
             if (!error->isEmpty())
@@ -1992,17 +1992,17 @@ private:
             }
             return true;
         }
-        if (name == QLatin1String("qmlagent.input_scroll_into_view")) {
+        if (name == QLatin1String("qmlagent_input_scroll_into_view")) {
             *targetMethod = QStringLiteral("Input.scrollIntoView");
             *targetParams = nodeRef(arguments, error);
             return error->isEmpty();
         }
-        if (name == QLatin1String("qmlagent.input_focus")) {
+        if (name == QLatin1String("qmlagent_input_focus")) {
             *targetMethod = QStringLiteral("Input.focusNode");
             *targetParams = nodeRef(arguments, error);
             return error->isEmpty();
         }
-        if (name == QLatin1String("qmlagent.input_mouse")) {
+        if (name == QLatin1String("qmlagent_input_mouse")) {
             *targetMethod = QStringLiteral("Input.dispatchMouseEvent");
             *targetParams = nodeRef(arguments, error);
             if (!error->isEmpty())
@@ -2017,7 +2017,7 @@ private:
             }
             return true;
         }
-        if (name == QLatin1String("qmlagent.input_drag")) {
+        if (name == QLatin1String("qmlagent_input_drag")) {
             *targetMethod = QStringLiteral("Input.dragNode");
             *targetParams = nodeRef(arguments, error);
             if (!error->isEmpty())
@@ -2033,7 +2033,7 @@ private:
             }
             return true;
         }
-        if (name == QLatin1String("qmlagent.input_touch")) {
+        if (name == QLatin1String("qmlagent_input_touch")) {
             *targetMethod = QStringLiteral("Input.dispatchTouchEvent");
             *targetParams = nodeRef(arguments, error);
             if (!error->isEmpty())
@@ -2046,7 +2046,7 @@ private:
             }
             return true;
         }
-        if (name == QLatin1String("qmlagent.input_key")) {
+        if (name == QLatin1String("qmlagent_input_key")) {
             *targetMethod = QStringLiteral("Input.dispatchKeyEvent");
             const bool hasSelector = arguments.contains(QStringLiteral("selector"))
                     && !arguments.value(QStringLiteral("selector")).toString().isEmpty();
@@ -2072,7 +2072,7 @@ private:
             }
             return true;
         }
-        if (name == QLatin1String("qmlagent.input_type_text")) {
+        if (name == QLatin1String("qmlagent_input_type_text")) {
             *targetMethod = QStringLiteral("Input.typeText");
             *targetParams = { { QStringLiteral("text"), arguments.value(QStringLiteral("text")) } };
             const bool hasSelector = arguments.contains(QStringLiteral("selector"))
@@ -2088,7 +2088,7 @@ private:
             }
             return true;
         }
-        if (name == QLatin1String("qmlagent.input_clear_text")) {
+        if (name == QLatin1String("qmlagent_input_clear_text")) {
             *targetMethod = QStringLiteral("Input.typeText");
             *targetParams = {
                 { QStringLiteral("text"), QString() },
@@ -2101,7 +2101,7 @@ private:
                 targetParams->insert(it.key(), it.value());
             return true;
         }
-        if (name == QLatin1String("qmlagent.input_dismiss_popup")) {
+        if (name == QLatin1String("qmlagent_input_dismiss_popup")) {
             *targetMethod = QStringLiteral("Input.dismissPopup");
             *targetParams = {};
             if (arguments.contains(QStringLiteral("all")))
@@ -2109,7 +2109,7 @@ private:
                                      arguments.value(QStringLiteral("all")));
             return true;
         }
-        if (name == QLatin1String("qmlagent.runtime_set_property")) {
+        if (name == QLatin1String("qmlagent_runtime_set_property")) {
             *targetMethod = QStringLiteral("Runtime.setProperty");
             *targetParams = nodeRef(arguments, error);
             if (!error->isEmpty())
@@ -2127,7 +2127,7 @@ private:
                 targetParams->insert(QStringLiteral("settle"), arguments.value(QStringLiteral("settle")));
             return true;
         }
-        if (name == QLatin1String("qmlagent.runtime_invoke_method")) {
+        if (name == QLatin1String("qmlagent_runtime_invoke_method")) {
             *targetMethod = QStringLiteral("Runtime.invokeMethod");
             *targetParams = nodeRef(arguments, error);
             if (!error->isEmpty())
@@ -2142,14 +2142,14 @@ private:
                 targetParams->insert(QStringLiteral("settle"), arguments.value(QStringLiteral("settle")));
             return true;
         }
-        if (name == QLatin1String("qmlagent.log_enable")) {
+        if (name == QLatin1String("qmlagent_log_enable")) {
             *targetMethod = QStringLiteral("Log.enable");
             if (arguments.contains(QStringLiteral("replayBuffered")))
                 targetParams->insert(QStringLiteral("replayBuffered"),
                                      arguments.value(QStringLiteral("replayBuffered")).toBool());
             return true;
         }
-        if (name == QLatin1String("qmlagent.log_get_entries")) {
+        if (name == QLatin1String("qmlagent_log_get_entries")) {
             *targetMethod = QStringLiteral("Log.getEntries");
             if (arguments.contains(QStringLiteral("level")))
                 targetParams->insert(QStringLiteral("level"), arguments.value(QStringLiteral("level")));
@@ -2161,7 +2161,7 @@ private:
                                      arguments.value(QStringLiteral("maxEntries")));
             return true;
         }
-        if (name == QLatin1String("qmlagent.render_capture_screenshot")) {
+        if (name == QLatin1String("qmlagent_render_capture_screenshot")) {
             *targetMethod = QStringLiteral("Render.captureScreenshot");
             if (arguments.contains(QStringLiteral("windowId")))
                 targetParams->insert(QStringLiteral("windowId"),
@@ -2174,7 +2174,7 @@ private:
                                  arguments.value(QStringLiteral("includeData")).toBool(false));
             return true;
         }
-        if (name == QLatin1String("qmlagent.source_resolve")) {
+        if (name == QLatin1String("qmlagent_source_resolve")) {
             *targetMethod = QStringLiteral("Source.resolveNode");
             *targetParams = nodeRef(arguments, error);
             return error->isEmpty();
@@ -2314,12 +2314,12 @@ private:
     bool handleMcpControlTool(const QJsonValue &requestId, const QString &name,
                               const QJsonObject &arguments)
     {
-        if (name == QLatin1String("qmlagent.target_status")) {
+        if (name == QLatin1String("qmlagent_target_status")) {
             writeMessage(jsonResponse(requestId, toolResult(targetStatus())));
             return true;
         }
 
-        if (name == QLatin1String("qmlagent.launcher_status")) {
+        if (name == QLatin1String("qmlagent_launcher_status")) {
             const QList<LauncherSession> sessions = discoverLauncherSessions(m_timeoutMs);
             const QJsonArray recentExits = recentLauncherExitReports();
             writeMessage(jsonResponse(requestId, toolResult(QJsonObject{
@@ -2329,14 +2329,14 @@ private:
                 { QStringLiteral("recentExitCount"), recentExits.size() },
                 { QStringLiteral("recentExits"), recentExits },
                 { QStringLiteral("workflows"), QJsonObject{
-                    { QStringLiteral("preview"), QStringLiteral("qmlagent-launcher preview <Main.qml> enables qmlagent.preview_reload") },
+                    { QStringLiteral("preview"), QStringLiteral("qmlagent-launcher preview <Main.qml> enables qmlagent_preview_reload") },
                     { QStringLiteral("application"), QStringLiteral("qmlagent-launcher app <executable> does not support preview reload") },
                 } },
             })));
             return true;
         }
 
-        if (name == QLatin1String("qmlagent.preview_reload")) {
+        if (name == QLatin1String("qmlagent_preview_reload")) {
             LauncherSession launcher;
             QString launcherError;
             if (!resolveLauncherSession(arguments.value(QStringLiteral("timeoutMs")).toInt(m_timeoutMs),
@@ -2363,7 +2363,7 @@ private:
             return true;
         }
 
-        if (name == QLatin1String("qmlagent.launcher_stop")) {
+        if (name == QLatin1String("qmlagent_launcher_stop")) {
             LauncherSession launcher;
             QString launcherError;
             QJsonObject fallbackResult;
@@ -2389,7 +2389,7 @@ private:
             return true;
         }
 
-        if (name == QLatin1String("qmlagent.disconnect")) {
+        if (name == QLatin1String("qmlagent_disconnect")) {
             if (m_currentCall.has_value() || m_workflow.has_value() || !m_queue.isEmpty()) {
                 PendingCall call;
                 call.kind = PendingCall::Kind::Disconnect;
@@ -2403,8 +2403,8 @@ private:
             return true;
         }
 
-        if (name != QLatin1String("qmlagent.connect_tcp")
-                && name != QLatin1String("qmlagent.connect_local_socket")) {
+        if (name != QLatin1String("qmlagent_connect_tcp")
+                && name != QLatin1String("qmlagent_connect_local_socket")) {
             return false;
         }
 
@@ -2414,7 +2414,7 @@ private:
             return true;
         }
 
-        if (name == QLatin1String("qmlagent.connect_local_socket")) {
+        if (name == QLatin1String("qmlagent_connect_local_socket")) {
             const QString path = arguments.value(QStringLiteral("path")).toString();
             if (path.isEmpty()) {
                 writeMessage(jsonResponse(requestId, toolErrorResult(
@@ -2481,9 +2481,9 @@ private:
         return QStringLiteral("QmlAgent target is not connected and no single live "
                               "qmlagent-launcher gateway was available. Start one launcher session "
                               "with qmlagent-launcher preview <Main.qml> or qmlagent-launcher app "
-                              "<executable> [-- args...], then call qmlagent.ui_query or other "
+                              "<executable> [-- args...], then call qmlagent_ui_query or other "
                               "target-backed tools directly. For manually launched targets, attach "
-                              "this MCP server with qmlagent.connect_tcp or qmlagent.connect_local_socket.");
+                              "this MCP server with qmlagent_connect_tcp or qmlagent_connect_local_socket.");
     }
 
     QJsonObject agentToolGuide() const
@@ -2491,54 +2491,54 @@ private:
         return {
             { QStringLiteral("advertisedTools"), advertisedToolNames() },
             { QStringLiteral("discoverabilityContract"),
-              QStringLiteral("Every qmlagent.* tool named in this guide should appear in advertisedTools. If a lazy agent runtime has not exposed one yet, search by the exact tool name from advertisedTools.") },
-            { QStringLiteral("inspect"), QStringLiteral("qmlagent.ui_query") },
+              QStringLiteral("Every qmlagent_* tool named in this guide should appear in advertisedTools. If a lazy agent runtime has not exposed one yet, search by the exact tool name from advertisedTools.") },
+            { QStringLiteral("inspect"), QStringLiteral("qmlagent_ui_query") },
             { QStringLiteral("batchVerificationReads"),
-              QStringLiteral("qmlagent.ui_query_many") },
-            { QStringLiteral("tree"), QStringLiteral("qmlagent.ui_get_tree") },
-            { QStringLiteral("click"), QStringLiteral("qmlagent.input_click") },
-            { QStringLiteral("longPress"), QStringLiteral("qmlagent.input_long_press") },
+              QStringLiteral("qmlagent_ui_query_many") },
+            { QStringLiteral("tree"), QStringLiteral("qmlagent_ui_get_tree") },
+            { QStringLiteral("click"), QStringLiteral("qmlagent_input_click") },
+            { QStringLiteral("longPress"), QStringLiteral("qmlagent_input_long_press") },
             { QStringLiteral("dragSliderHandleSwipe"),
-              QStringLiteral("qmlagent.input_drag") },
+              QStringLiteral("qmlagent_input_drag") },
             { QStringLiteral("scrollFlickableListViewGridViewTableViewTreeView"),
-              QStringLiteral("qmlagent.input_wheel") },
+              QStringLiteral("qmlagent_input_wheel") },
             { QStringLiteral("scrollClippedTargetIntoView"),
-              QStringLiteral("qmlagent.input_scroll_into_view") },
+              QStringLiteral("qmlagent_input_scroll_into_view") },
             { QStringLiteral("waitForSelectorOrProperty"),
-              QStringLiteral("qmlagent.ui_wait_for") },
+              QStringLiteral("qmlagent_ui_wait_for") },
             { QStringLiteral("clickAndWaitForDrawerMenuPopupDialogLoaderTransition"),
-              QStringLiteral("qmlagent.workflow_click_and_wait") },
+              QStringLiteral("qmlagent_workflow_click_and_wait") },
             { QStringLiteral("longPressAndWaitForContextMenuAlternateAction"),
-              QStringLiteral("qmlagent.workflow_long_press_and_wait") },
+              QStringLiteral("qmlagent_workflow_long_press_and_wait") },
             { QStringLiteral("immediateClickVerification"),
-              QStringLiteral("qmlagent.workflow_click") },
-            { QStringLiteral("keyboardWorkflow"), QStringLiteral("qmlagent.workflow_key") },
+              QStringLiteral("qmlagent_workflow_click") },
+            { QStringLiteral("keyboardWorkflow"), QStringLiteral("qmlagent_workflow_key") },
             { QStringLiteral("computedBindingProvenance"),
-              QStringLiteral("qmlagent.diagnostics_analyze_binding") },
+              QStringLiteral("qmlagent_diagnostics_analyze_binding") },
             { QStringLiteral("visualEvidencePolicy"),
-              QStringLiteral("Use structural tools first: ui_query/ui_get_tree, diagnostics, source, logs, input/workflow verification. qmlagent.render_capture_screenshot and qmlagentctl screenshot are fallback evidence after structured evidence is insufficient or the task is explicitly visual. Use scale/region or qmlagentctl --out to keep image bytes out of agent context.") },
+              QStringLiteral("Use structural tools first: ui_query/ui_get_tree, diagnostics, source, logs, input/workflow verification. qmlagent_render_capture_screenshot and qmlagentctl screenshot are fallback evidence after structured evidence is insufficient or the task is explicitly visual. Use scale/region or qmlagentctl --out to keep image bytes out of agent context.") },
             { QStringLiteral("toolSearchHints"), QJsonArray{
-                QStringLiteral("qmlagent.workflow_click_and_wait Drawer Popup Dialog ComboBox QQuickPopupItem transition wait"),
-                QStringLiteral("qmlagent.workflow_long_press_and_wait long press press-and-hold MouseArea onPressAndHold context menu alternate action"),
-                QStringLiteral("qmlagent.ui_query_many batch multiple selectors properties verification"),
-                QStringLiteral("qmlagent.input_long_press press-and-hold long press"),
-                QStringLiteral("qmlagent.input_scroll_into_view center_outside_viewport clipped content retry click"),
-                QStringLiteral("qmlagent.ui_wait_for wait until selector found property visible"),
-                QStringLiteral("qmlagent.ui_query popup contents ItemDelegate MenuItem visible choices"),
-                QStringLiteral("qmlagent.input_drag Slider RangeSlider Dial handle drag"),
-                QStringLiteral("qmlagent.input_wheel Flickable ListView GridView TableView TreeView scroll"),
-                QStringLiteral("qmlagent.input_focus TextField TextArea before type text"),
-                QStringLiteral("qmlagent.render_capture_screenshot fallback visual evidence only structured first"),
+                QStringLiteral("qmlagent_workflow_click_and_wait Drawer Popup Dialog ComboBox QQuickPopupItem transition wait"),
+                QStringLiteral("qmlagent_workflow_long_press_and_wait long press press-and-hold MouseArea onPressAndHold context menu alternate action"),
+                QStringLiteral("qmlagent_ui_query_many batch multiple selectors properties verification"),
+                QStringLiteral("qmlagent_input_long_press press-and-hold long press"),
+                QStringLiteral("qmlagent_input_scroll_into_view center_outside_viewport clipped content retry click"),
+                QStringLiteral("qmlagent_ui_wait_for wait until selector found property visible"),
+                QStringLiteral("qmlagent_ui_query popup contents ItemDelegate MenuItem visible choices"),
+                QStringLiteral("qmlagent_input_drag Slider RangeSlider Dial handle drag"),
+                QStringLiteral("qmlagent_input_wheel Flickable ListView GridView TableView TreeView scroll"),
+                QStringLiteral("qmlagent_input_focus TextField TextArea before type text"),
+                QStringLiteral("qmlagent_render_capture_screenshot fallback visual evidence only structured first"),
             } },
             { QStringLiteral("fallbacks"), QJsonObject{
                 { QStringLiteral("workflow_click_and_wait_missing"),
-                  QStringLiteral("Use qmlagent.input_click followed by qmlagent.ui_wait_for.") },
+                  QStringLiteral("Use qmlagent_input_click followed by qmlagent_ui_wait_for.") },
                 { QStringLiteral("workflow_long_press_and_wait_missing"),
-                  QStringLiteral("Use qmlagent.input_long_press followed by qmlagent.ui_wait_for.") },
+                  QStringLiteral("Use qmlagent_input_long_press followed by qmlagent_ui_wait_for.") },
                 { QStringLiteral("center_outside_viewport"),
-                  QStringLiteral("Use qmlagent.input_scroll_into_view for instantiated clipped content, then retry the click/read. For virtualized rows that have no node yet, wheel toward them and re-query first.") },
+                  QStringLiteral("Use qmlagent_input_scroll_into_view for instantiated clipped content, then retry the click/read. For virtualized rows that have no node yet, wheel toward them and re-query first.") },
                 { QStringLiteral("visualEvidenceNeeded"),
-                  QStringLiteral("Use qmlagent.render_capture_screenshot only after structured runtime evidence is insufficient; default output omits PNG data. If includeData:true is necessary, pass scale and/or region.") },
+                  QStringLiteral("Use qmlagent_render_capture_screenshot only after structured runtime evidence is insufficient; default output omits PNG data. If includeData:true is necessary, pass scale and/or region.") },
             } },
         };
     }
@@ -2602,21 +2602,17 @@ private:
         }
         if (!isTargetConnected()) {
             status.insert(QStringLiteral("nextStep"), reachableLauncherCount == 1
-                    ? QStringLiteral("A single qmlagent-launcher gateway is available. Call target-backed request/response tools such as qmlagent.ui_query, qmlagent.ui_wait_for, qmlagent.input_click, qmlagent.input_long_press, qmlagent.input_drag, qmlagent.input_wheel, qmlagent.preview_reload, or workflow tools directly. Use qmlagent.connect_tcp/connect_local_socket only for manually launched targets or streamed subscriptions.")
+                    ? QStringLiteral("A single qmlagent-launcher gateway is available. Call target-backed request/response tools such as qmlagent_ui_query, qmlagent_ui_wait_for, qmlagent_input_click, qmlagent_input_long_press, qmlagent_input_drag, qmlagent_input_wheel, qmlagent_preview_reload, or workflow tools directly. Use qmlagent_connect_tcp/connect_local_socket only for manually launched targets or streamed subscriptions.")
                     : notConnectedMessage());
         }
         status.insert(QStringLiteral("attachTools"), QJsonObject{
-            { QStringLiteral("rawMcp"), QJsonArray{
-                QStringLiteral("qmlagent.connect_tcp"),
-                QStringLiteral("qmlagent.connect_local_socket"),
-            } },
-            { QStringLiteral("native"), QJsonArray{
+            { QStringLiteral("tools"), QJsonArray{
                 QStringLiteral("qmlagent_connect_tcp"),
                 QStringLiteral("qmlagent_connect_local_socket"),
             } },
             { QStringLiteral("toolSearchHints"), QJsonArray{
-                QStringLiteral("qmlagent.connect_tcp attach target"),
-                QStringLiteral("qmlagent.connect_local_socket attach target"),
+                QStringLiteral("qmlagent_connect_tcp attach target"),
+                QStringLiteral("qmlagent_connect_local_socket attach target"),
             } },
         });
         if (!m_recentLogEntries.isEmpty()) {
@@ -2666,9 +2662,9 @@ private:
                 || call.targetMethod == QLatin1String("UI.unsubscribe")
                 || call.targetMethod == QLatin1String("Log.enable")) {
             *message = QStringLiteral("%1 requires a direct persistent MCP attach because it streams events to this MCP process. "
-                                      "Use qmlagent.connect_tcp or qmlagent.connect_local_socket for subscriptions. "
-                                      "Request/response tools such as qmlagent.ui_query, qmlagent.ui_wait_for, "
-                                      "qmlagent.input_click, qmlagent.preview_reload, and qmlagent.workflow_click_and_wait "
+                                      "Use qmlagent_connect_tcp or qmlagent_connect_local_socket for subscriptions. "
+                                      "Request/response tools such as qmlagent_ui_query, qmlagent_ui_wait_for, "
+                                      "qmlagent_input_click, qmlagent_preview_reload, and qmlagent_workflow_click_and_wait "
                                       "can route through qmlagent-launcher automatically.")
                                .arg(call.targetMethod);
             return true;
