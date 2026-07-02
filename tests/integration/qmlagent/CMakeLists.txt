@@ -72,20 +72,64 @@ target_compile_definitions(tst_qmlagentintegration PRIVATE
     TEST_QMLAGENTLAUNCHER_EXECUTABLE="$<TARGET_FILE:qmlagent-launcher>"
 )
 
-add_test(NAME qmlagent_tcp_smoke
+# One integration binary, registered as slot groups so a failure names its
+# area and each group gets its own timeout.
+#
+# Environment notes:
+# - QT_QUICK_CONTROLS_STYLE=Basic: the suite verifies QmlAgent contracts, not
+#   Qt's platform styles. The macOS native style paints AppKit NSViews, which
+#   is crash-prone under the offscreen platform and responds differently to
+#   synthetic drags; Basic keeps the run deterministic and identical across
+#   macOS and Linux.
+# - QMLAGENT_GUI_DISPATCH_GRACE_MS=1000 shortens the started-request grace
+#   window so guiDispatchReportsTruthfulOutcomes exercises the abandoned/busy
+#   path without a very long blocking fixture.
+set(qmlagent_integration_env "QTFRAMEWORK_BYPASS_LICENSE_CHECK=1;QT_QPA_PLATFORM=offscreen;QT_QUICK_CONTROLS_STYLE=Basic;QMLAGENT_GUI_DISPATCH_GRACE_MS=1000;QMLAGENT_SMOKE_APP=$<TARGET_FILE:qmlagent_smoke>;QMLAGENT_CONTROLS_APP=$<TARGET_FILE:qmlagent_controls_smoke>;QMLAGENT_FIXTURE_APP=$<TARGET_FILE:qmlagent_diagnostic_fixture>;QMLAGENT_FIXTURES_DIR=${CMAKE_SOURCE_DIR}/fixtures/diagnostics;QMLAGENT_WORKFLOW_FIXTURES_DIR=${CMAKE_SOURCE_DIR}/fixtures/workflows")
+
+add_test(NAME qmlagent_integration_core
     COMMAND tst_qmlagentintegration
+        clickNodeDeliversSyntheticInput
+        inputTargetsMultipleWindows
+        uiSubscribeEmitsCoalescedChangeEvents
+        uiTreeSupportsProjectionBoundsAndCollapse
+        uiQuerySerializesRequestedValueTypes
+        uiQueryDefaultsToVisibleNodes
+)
+add_test(NAME qmlagent_integration_diagnostics
+    COMMAND tst_qmlagentintegration
+        diagnosticsAnalyzeBindingReportsRuntimeProvenance
+        sourceResolverClassifiesLoadedDelegateAndDynamicNodes
+        sourceResolveNodeReportsObjectNameFallback
+        diagnosticsReportLayoutFailures
+        diagnosticsFixturesMatchExpectedIssues
+        diagnosticsAnalyzeNodeHonorsChecks
+        renderCaptureScreenshot
+        logGetEntriesSupportsCursor
+        selectorNotFoundRanksStableCandidates
+)
+add_test(NAME qmlagent_integration_controls
+    COMMAND tst_qmlagentintegration
+        qtQuickControlsExposeAuthoredIds
+)
+add_test(NAME qmlagent_integration_client
+    COMMAND tst_qmlagentintegration
+        referenceClientConvenienceCommands
+        referenceClientMcpPersistentMode
+        referenceClientMcpRoutesThroughLauncher
+        referenceClientMcpWorkflowReports
+        referenceClientReportsSingleClientConflict
+        referenceClientMcpRefusesExistingLocalSocketPath
+        referenceClientMcpConnectsLocalSocket
+)
+add_test(NAME qmlagent_integration_dispatch
+    COMMAND tst_qmlagentintegration
+        guiDispatchReportsTruthfulOutcomes
 )
 
-# QT_QUICK_CONTROLS_STYLE=Basic: the suite verifies QmlAgent contracts, not
-# Qt's platform styles. The macOS native style paints AppKit NSViews, which
-# is crash-prone under the offscreen platform and responds differently to
-# synthetic drags; Basic keeps the run deterministic and identical across
-# macOS and Linux.
-set_tests_properties(qmlagent_tcp_smoke PROPERTIES
-    # QMLAGENT_GUI_DISPATCH_GRACE_MS=1000 shortens the started-request grace
-    # window so guiDispatchReportsTruthfulOutcomes exercises the abandoned/busy
-    # path without a very long blocking fixture.
-    ENVIRONMENT "QTFRAMEWORK_BYPASS_LICENSE_CHECK=1;QT_QPA_PLATFORM=offscreen;QT_QUICK_CONTROLS_STYLE=Basic;QMLAGENT_GUI_DISPATCH_GRACE_MS=1000;QMLAGENT_SMOKE_APP=$<TARGET_FILE:qmlagent_smoke>;QMLAGENT_CONTROLS_APP=$<TARGET_FILE:qmlagent_controls_smoke>;QMLAGENT_FIXTURE_APP=$<TARGET_FILE:qmlagent_diagnostic_fixture>;QMLAGENT_FIXTURES_DIR=${CMAKE_SOURCE_DIR}/fixtures/diagnostics;QMLAGENT_WORKFLOW_FIXTURES_DIR=${CMAKE_SOURCE_DIR}/fixtures/workflows"
-    ENVIRONMENT_MODIFICATION "QT_PLUGIN_PATH=path_list_prepend:${CMAKE_BINARY_DIR}/plugins"
-    TIMEOUT 90
-)
+foreach(_group core diagnostics controls client dispatch)
+    set_tests_properties(qmlagent_integration_${_group} PROPERTIES
+        ENVIRONMENT "${qmlagent_integration_env}"
+        ENVIRONMENT_MODIFICATION "QT_PLUGIN_PATH=path_list_prepend:${CMAKE_BINARY_DIR}/plugins"
+        TIMEOUT 60
+    )
+endforeach()

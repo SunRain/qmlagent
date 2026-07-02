@@ -19,5 +19,5 @@ enable_testing()
 
 add_subdirectory(src/plugins/qmltooling/qmldbg_agent)
 add_subdirectory(tests/auto/qmlagent)
-add_subdirectory(tests/manual/qmlagent)
+add_subdirectory(tests/integration/qmlagent)
 add_subdirectory(tools/qmlagent)
