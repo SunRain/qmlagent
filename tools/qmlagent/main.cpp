@@ -326,13 +326,47 @@ static Expectation parseExpectation(const QString &text)
     return {};
 }
 
+// Mirrors compareJsonValues/jsonValuesEqual/numericValue in
+// qqmlagentuitree.cpp so a workflow before/after verdict and a UI.waitFor
+// predicate agree on the same data: fuzzy numeric equality, numeric-string
+// coercion for comparisons, bool/null identity, string fallback.
+static bool expectationNumericValue(const QJsonValue &value, double *number)
+{
+    if (value.isDouble()) {
+        *number = value.toDouble();
+        return true;
+    }
+    if (value.isString()) {
+        bool ok = false;
+        const double parsed = value.toString().toDouble(&ok);
+        if (ok) {
+            *number = parsed;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool expectationValuesEqual(const QJsonValue &left, const QJsonValue &right)
+{
+    double leftNumber = 0;
+    double rightNumber = 0;
+    if (expectationNumericValue(left, &leftNumber) && expectationNumericValue(right, &rightNumber))
+        return qFuzzyCompare(leftNumber + 1.0, rightNumber + 1.0);
+    if (left.isBool() || right.isBool())
+        return left.toBool() == right.toBool();
+    if (left.isNull() || right.isNull())
+        return left.isNull() && right.isNull();
+    return left.toString() == right.toString();
+}
+
 static bool compareExpectedValues(const QJsonValue &actual, const QString &op,
                                   const QJsonValue &expected)
 {
     if (op == QLatin1String("="))
-        return actual == expected;
+        return expectationValuesEqual(actual, expected);
     if (op == QLatin1String("!="))
-        return actual != expected;
+        return !expectationValuesEqual(actual, expected);
 
     if (op == QLatin1String("contains") || op == QLatin1String("startsWith")
             || op == QLatin1String("endsWith")) {
@@ -347,11 +381,13 @@ static bool compareExpectedValues(const QJsonValue &actual, const QString &op,
         return actualString.endsWith(expectedString);
     }
 
-    if (!actual.isDouble() || !expected.isDouble())
+    double actualNumber = 0;
+    double expectedNumber = 0;
+    if (!expectationNumericValue(actual, &actualNumber)
+            || !expectationNumericValue(expected, &expectedNumber)) {
         return false;
+    }
 
-    const double actualNumber = actual.toDouble();
-    const double expectedNumber = expected.toDouble();
     if (op == QLatin1String(">"))
         return actualNumber > expectedNumber;
     if (op == QLatin1String(">="))

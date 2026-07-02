@@ -2012,6 +2012,8 @@ static bool jsonValuesEqual(const QJsonValue &left, const QJsonValue &right)
     return left.toString() == right.toString();
 }
 
+// Keep in sync with compareExpectedValues in tools/qmlagent/main.cpp: the
+// client-side workflow verdicts must agree with UI.waitFor on the same data.
 static bool compareJsonValues(const QJsonValue &actual, const QString &op,
                               const QJsonValue &expected, bool *supported)
 {
