@@ -172,17 +172,21 @@ static QQuickItem *topmostInputBlockerAt(QQuickItem *root, const QPointF &sceneP
             return descendantBlocker;
 
         if (isPlausibleInputBlocker(child)) {
-            // A mouse-accepting surface that fully encloses the target is
-            // the control's own click area, not an occluder: Text under an
-            // anchors.fill MouseArea is the canonical custom-control
-            // pattern, and a real user click at this point lands on that
-            // surface by design. Only partial overlap reads as foreign
-            // occlusion. (F-018: agents click what they can see — the
-            // label — and the label's interaction surface must not refuse.)
+            // A mouse-accepting surface that fully encloses the target AND is
+            // attached to a container that owns the target is the control's
+            // own click area, not an occluder: Text under an anchors.fill
+            // MouseArea is the canonical custom-control pattern, and a real
+            // user click at this point lands on that surface by design.
+            // (F-018: agents click what they can see — the label — and the
+            // label's interaction surface must not refuse.) Enclosure alone
+            // is not proof of same-control ownership: a foreign overlay that
+            // happens to cover the target still reads as occlusion.
             const QRectF childBox = itemBoxInWindow(child);
             const QRectF targetBox = itemBoxInWindow(target);
             if ((hasAcceptedButtons(child) || hasPointerHandlerChild(child))
-                    && childBox.contains(targetBox)) {
+                    && childBox.contains(targetBox)
+                    && child->parentItem()
+                    && child->parentItem()->isAncestorOf(target)) {
                 return nullptr;
             }
             return child;
