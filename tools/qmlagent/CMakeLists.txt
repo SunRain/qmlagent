@@ -9,6 +9,8 @@ set(qmlagent_client_sources
     qmlagentmcpoutput.h
     qmlagentmcpprotocol.cpp
     qmlagentmcpprotocol.h
+    qmlagentpaths.cpp
+    qmlagentpaths.h
 )
 
 # The Qt lib dir is kept in the install rpath so the tools also run when
@@ -46,6 +48,8 @@ add_qmlagent_client(qmlagent-mcp)
 
 qt_add_executable(qmlagent-launcher
     launcher_main.cpp
+    qmlagentpaths.cpp
+    qmlagentpaths.h
 )
 
 target_link_libraries(qmlagent-launcher PRIVATE

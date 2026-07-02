@@ -4,6 +4,7 @@
 #include "qmlagentclioutput.h"
 #include "qmlagentmcpoutput.h"
 #include "qmlagentmcpprotocol.h"
+#include "qmlagentpaths.h"
 
 #include <private/qqmldebugclient_p.h>
 #include <private/qqmldebugconnection_p.h>
@@ -445,99 +446,12 @@ static QJsonObject makeRequest(int id, const QString &requestMethod, const QJson
     };
 }
 
-static QString qmlAgentDataRoot()
-{
-    QString base = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
-    if (base.isEmpty())
-        base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    if (base.isEmpty())
-        base = QStandardPaths::writableLocation(QStandardPaths::GenericStateLocation);
-    if (base.isEmpty())
-        base = QDir::homePath();
-    return QDir(base).filePath(QStringLiteral("QmlAgent"));
-}
-
-static QString qmlAgentTempRoot()
-{
-    QString base = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
-    if (base.isEmpty())
-        base = QDir::tempPath();
-    const QString canonicalBase = QFileInfo(base).canonicalFilePath();
-    if (!canonicalBase.isEmpty())
-        base = canonicalBase;
-    return QDir(base).filePath(QStringLiteral("QmlAgent"));
-}
-
-static QFileDevice::Permissions privateDirPermissions()
-{
-    return QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner;
-}
-
-static QFileDevice::Permissions privateFilePermissions()
-{
-    return QFileDevice::ReadOwner | QFileDevice::WriteOwner;
-}
-
-static bool ensurePrivateDirectory(const QString &path, QString *error = nullptr)
-{
-    const QFileInfo before(path);
-    if (before.exists() && (before.isSymLink() || !before.isDir())) {
-        if (error)
-            *error = QStringLiteral("Refusing non-directory or symlink path: %1").arg(path);
-        return false;
-    }
-
-    if (!QDir().mkpath(path)) {
-        if (error)
-            *error = QStringLiteral("Could not create directory: %1").arg(path);
-        return false;
-    }
-
-    const QFileInfo after(path);
-    if (after.isSymLink() || !after.isDir()) {
-        if (error)
-            *error = QStringLiteral("Refusing non-directory or symlink path: %1").arg(path);
-        return false;
-    }
-
-    QFile::setPermissions(path, privateDirPermissions());
-    return true;
-}
-
-static bool pathIsInsideDirectory(const QString &path, const QString &directory)
-{
-    const QString canonicalDirectory = QFileInfo(directory).canonicalFilePath();
-    if (canonicalDirectory.isEmpty())
-        return false;
-
-    const QFileInfo info(path);
-    const QString canonicalParent = info.dir().canonicalPath();
-    if (canonicalParent.isEmpty())
-        return false;
-
-    return canonicalParent == canonicalDirectory
-            || canonicalParent.startsWith(canonicalDirectory + QLatin1Char('/'));
-}
-
 struct LauncherSession
 {
     QString id;
     QJsonObject metadata;
     QJsonObject status;
 };
-
-static QStringList globalLauncherRegistryDirs()
-{
-    return {
-        QDir(qmlAgentTempRoot()).filePath(QStringLiteral("launcher-sessions")),
-        QDir(qmlAgentDataRoot()).filePath(QStringLiteral("launcher-sessions")),
-    };
-}
-
-static QString launcherExitDir()
-{
-    return QDir(qmlAgentTempRoot()).filePath(QStringLiteral("launcher-exits"));
-}
 
 static QJsonArray recentLauncherExitReports()
 {
@@ -653,14 +567,12 @@ static QJsonObject sendLauncherMailboxControlRequest(const QString &mailboxDir, 
     const QString token = QUuid::createUuid().toString(QUuid::WithoutBraces);
     const QString requestPath = QDir(mailboxDir).filePath(
             QStringLiteral("request-%1.json").arg(token));
-    const QString replyDir = QDir(qmlAgentTempRoot()).filePath(
-            QStringLiteral("mailbox-replies/%1").arg(qint64(QCoreApplication::applicationPid())));
+    const QString replyDir = QDir(mailboxRepliesRoot())
+            .filePath(QString::number(qint64(QCoreApplication::applicationPid())));
     if (!ensurePrivateDirectory(qmlAgentTempRoot(), error))
         return {};
-    if (!ensurePrivateDirectory(QDir(qmlAgentTempRoot()).filePath(QStringLiteral("mailbox-replies")),
-                                error)) {
+    if (!ensurePrivateDirectory(mailboxRepliesRoot(), error))
         return {};
-    }
     if (!ensurePrivateDirectory(replyDir, error))
         return {};
     const QString responsePath = QDir(replyDir).filePath(
