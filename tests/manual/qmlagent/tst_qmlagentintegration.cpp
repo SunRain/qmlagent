@@ -970,6 +970,8 @@ void QmlAgentIntegrationTest::clickNodeDeliversSyntheticInput()
              qPrintable(QString::fromUtf8(QJsonDocument(stableSelectorHints)
                                                   .toJson(QJsonDocument::Compact))));
 
+    // "Delta" appears on the outer delegate Text and its inner mirror Text on
+    // one ancestor chain; text matches collapse onto the outermost label owner.
     const auto ambiguousTextDelegateResponse = invoke(&client, QStringLiteral("UI.query"), {
         { QStringLiteral("selector"), QStringLiteral("text=\"Delta\"") },
         { QStringLiteral("includeSource"), true },
@@ -977,13 +979,15 @@ void QmlAgentIntegrationTest::clickNodeDeliversSyntheticInput()
     QVERIFY2(ambiguousTextDelegateResponse.has_value(), qPrintable(errorMessage));
     const QJsonObject ambiguousTextResult = ambiguousTextDelegateResponse
             ->value(QStringLiteral("result")).toObject();
-    QCOMPARE(ambiguousTextResult.value(QStringLiteral("matches")).toArray().size(), 2);
-    const QJsonArray textIndexedSelectors = ambiguousTextResult
-            .value(QStringLiteral("diagnostics")).toArray()
-            .at(0).toObject().value(QStringLiteral("indexedSelectors")).toArray();
-    QCOMPARE(textIndexedSelectors.size(), 1);
-    QCOMPARE(textIndexedSelectors.at(0).toObject().value(QStringLiteral("selector")).toString(),
-             QStringLiteral("id=\"indexedTextContainer\" index=1"));
+    const QJsonArray collapsedTextMatches = ambiguousTextResult
+            .value(QStringLiteral("matches")).toArray();
+    QCOMPARE(collapsedTextMatches.size(), 1);
+    QCOMPARE(collapsedTextMatches.at(0).toObject().value(QStringLiteral("qmlId")).toString(),
+             QStringLiteral("indexedTextContainer"));
+    QVERIFY2(ambiguousTextResult.value(QStringLiteral("diagnostics")).toArray().isEmpty(),
+             qPrintable(QString::fromUtf8(QJsonDocument(
+                     ambiguousTextResult.value(QStringLiteral("diagnostics")).toArray())
+                                                  .toJson(QJsonDocument::Compact))));
 
     const auto textDelegateIndexResponse = invoke(&client, QStringLiteral("UI.query"), {
         { QStringLiteral("selector"), QStringLiteral("id=\"indexedTextContainer\" index=1") },
@@ -2215,42 +2219,34 @@ void QmlAgentIntegrationTest::qtQuickControlsExposeAuthoredIds()
     QVERIFY2(comboChoiceQueryResponse.has_value(), qPrintable(errorMessage));
     const QJsonObject comboChoiceQueryResult = comboChoiceQueryResponse
             ->value(QStringLiteral("result")).toObject();
+    // The delegate label and its ItemDelegate share one ancestor chain, so the
+    // text match collapses onto the outermost delegate: a single unambiguous
+    // actionable match with no ambiguity diagnostics. Qt Quick Controls
+    // ComboBox popup delegates are framework-created and may not expose a
+    // unique app-stable selector, so click the bounded session-local nodeId
+    // instead of adding app-only objectNames.
     const QJsonArray comboChoiceDiagnostics = comboChoiceQueryResult
             .value(QStringLiteral("diagnostics")).toArray();
-    QVERIFY2(!comboChoiceDiagnostics.isEmpty(),
+    QVERIFY2(comboChoiceDiagnostics.isEmpty(),
              qPrintable(QString::fromUtf8(QJsonDocument(comboChoiceQueryResult)
                                           .toJson(QJsonDocument::Compact))));
-    const QJsonArray comboIndexedSelectors = comboChoiceDiagnostics.at(0).toObject()
-            .value(QStringLiteral("indexedSelectors")).toArray();
-    QJsonObject comboClickParams;
-    if (!comboIndexedSelectors.isEmpty()) {
-        const QString comboChoiceSelector = comboIndexedSelectors.at(0).toObject()
-                .value(QStringLiteral("selector")).toString();
-        QVERIFY2(!comboChoiceSelector.isEmpty(),
-                 qPrintable(QString::fromUtf8(QJsonDocument(comboChoiceQueryResult)
-                                              .toJson(QJsonDocument::Compact))));
-        comboClickParams.insert(QStringLiteral("selector"), comboChoiceSelector);
-    } else {
-        // Qt Quick Controls ComboBox popup delegates are framework-created and
-        // may not expose a unique app-stable selector. Use the actionable
-        // ItemDelegate node from the structured query result as the bounded
-        // session-local fallback instead of adding app-only objectNames.
-        const QJsonArray comboChoiceMatches =
-                comboChoiceQueryResult.value(QStringLiteral("matches")).toArray();
-        int comboChoiceNodeId = -1;
-        for (const QJsonValue &matchValue : comboChoiceMatches) {
-            const QJsonObject match = matchValue.toObject();
-            if (match.value(QStringLiteral("type")).toString().contains(
-                        QLatin1String("ItemDelegate"))) {
-                comboChoiceNodeId = match.value(QStringLiteral("nodeId")).toInt(-1);
-                break;
-            }
+    const QJsonArray comboChoiceMatches =
+            comboChoiceQueryResult.value(QStringLiteral("matches")).toArray();
+    QCOMPARE(comboChoiceMatches.size(), 1);
+    int comboChoiceNodeId = -1;
+    for (const QJsonValue &matchValue : comboChoiceMatches) {
+        const QJsonObject match = matchValue.toObject();
+        if (match.value(QStringLiteral("type")).toString().contains(
+                    QLatin1String("ItemDelegate"))) {
+            comboChoiceNodeId = match.value(QStringLiteral("nodeId")).toInt(-1);
+            break;
         }
-        QVERIFY2(comboChoiceNodeId > 0,
-                 qPrintable(QString::fromUtf8(QJsonDocument(comboChoiceQueryResult)
-                                              .toJson(QJsonDocument::Compact))));
-        comboClickParams.insert(QStringLiteral("nodeId"), comboChoiceNodeId);
     }
+    QVERIFY2(comboChoiceNodeId > 0,
+             qPrintable(QString::fromUtf8(QJsonDocument(comboChoiceQueryResult)
+                                          .toJson(QJsonDocument::Compact))));
+    QJsonObject comboClickParams;
+    comboClickParams.insert(QStringLiteral("nodeId"), comboChoiceNodeId);
     const auto comboChoiceResponse = invoke(&client, QStringLiteral("Input.clickNode"),
                                             comboClickParams, requestId++, &errorMessage);
     QVERIFY2(comboChoiceResponse.has_value(), qPrintable(errorMessage));
@@ -2595,11 +2591,25 @@ void QmlAgentIntegrationTest::qtQuickControlsExposeAuthoredIds()
     QCOMPARE(tumblerDragResponse->value(QStringLiteral("result")).toObject()
                      .value(QStringLiteral("delivered")).toBool(),
              true);
-    const PropertyValueResult tumblerAfterProperty =
-            propertyValue(QStringLiteral("controlsTumbler"), QStringLiteral("currentIndex"));
-    QVERIFY2(tumblerAfterProperty.ok(), qPrintable(tumblerAfterProperty.failure));
-    QVERIFY2(tumblerAfterProperty.value.toDouble() != tumblerBefore,
-             "Expected Tumbler drag input to change currentIndex.");
+    // Tumbler snaps to the new index through an animation after release, so
+    // wait for the semantic state instead of reading currentIndex immediately.
+    const auto tumblerChangedResponse = invoke(&client, QStringLiteral("UI.waitFor"), {
+        { QStringLiteral("selector"), QStringLiteral("id=\"controlsTumbler\"") },
+        { QStringLiteral("until"), QJsonObject{
+            { QStringLiteral("property"), QStringLiteral("currentIndex") },
+            { QStringLiteral("op"), QStringLiteral("!=") },
+            { QStringLiteral("value"), tumblerBefore },
+        } },
+        { QStringLiteral("timeoutMs"), 2000 },
+    }, requestId++, &errorMessage);
+    QVERIFY2(tumblerChangedResponse.has_value(), qPrintable(errorMessage));
+    QVERIFY2(tumblerChangedResponse->value(QStringLiteral("result")).toObject()
+                     .value(QStringLiteral("ok")).toBool(false),
+             qPrintable(QStringLiteral("Expected Tumbler drag input to change currentIndex: %1")
+                                .arg(QString::fromUtf8(QJsonDocument(
+                                        tumblerChangedResponse->value(QStringLiteral("result"))
+                                                .toObject())
+                                                               .toJson(QJsonDocument::Compact)))));
 
     const PropertyValueResult listViewContentBeforeProperty =
             propertyValue(QStringLiteral("controlsFlickableListView"), QStringLiteral("contentY"));
@@ -2615,13 +2625,25 @@ void QmlAgentIntegrationTest::qtQuickControlsExposeAuthoredIds()
     QCOMPARE(listViewWheelResult.value(QStringLiteral("delivered")).toBool(), true);
     QCOMPARE(listViewWheelResult.value(QStringLiteral("mode")).toString(),
              QStringLiteral("synthetic-qt-event"));
-    const PropertyValueResult listViewContentAfterProperty =
-            propertyValue(QStringLiteral("controlsFlickableListView"), QStringLiteral("contentY"));
-    QVERIFY2(listViewContentAfterProperty.ok(), qPrintable(listViewContentAfterProperty.failure));
-    QVERIFY2(listViewContentAfterProperty.value.toDouble() > listViewContentBefore,
-             qPrintable(QStringLiteral("Expected Controls ListView wheel to increase contentY: before=%1 after=%2")
-                                .arg(listViewContentBefore)
-                                .arg(listViewContentAfterProperty.value.toDouble())));
+    // The wheel starts a flick animation; contentY moves over the following
+    // frames, so wait for the semantic state instead of reading immediately.
+    const auto listViewScrolledResponse = invoke(&client, QStringLiteral("UI.waitFor"), {
+        { QStringLiteral("selector"), QStringLiteral("id=\"controlsFlickableListView\"") },
+        { QStringLiteral("until"), QJsonObject{
+            { QStringLiteral("property"), QStringLiteral("contentY") },
+            { QStringLiteral("op"), QStringLiteral(">") },
+            { QStringLiteral("value"), listViewContentBefore },
+        } },
+        { QStringLiteral("timeoutMs"), 2000 },
+    }, requestId++, &errorMessage);
+    QVERIFY2(listViewScrolledResponse.has_value(), qPrintable(errorMessage));
+    QVERIFY2(listViewScrolledResponse->value(QStringLiteral("result")).toObject()
+                     .value(QStringLiteral("ok")).toBool(false),
+             qPrintable(QStringLiteral("Expected Controls ListView wheel to increase contentY: %1")
+                                .arg(QString::fromUtf8(QJsonDocument(
+                                        listViewScrolledResponse->value(QStringLiteral("result"))
+                                                .toObject())
+                                                               .toJson(QJsonDocument::Compact)))));
 
     const PropertyValueResult scrollBarBeforeProperty =
             propertyValue(QStringLiteral("controlsScrollBar"), QStringLiteral("position"));
@@ -2712,7 +2734,10 @@ void QmlAgentIntegrationTest::qtQuickControlsExposeAuthoredIds()
                                     .arg(QString::fromUtf8(QJsonDocument(issue)
                                                            .toJson(QJsonDocument::Compact)))));
     }
-    bool foundSwipeViewOverlap = false;
+    // Note: an earlier expectation of a controlsPage/SwipeView overlap was a
+    // native macOS style layout artifact; under the Basic style the pages lay
+    // out without overlapping, so only the authored SwipeDelegate overlap is
+    // asserted.
     bool foundSwipeDelegateOverlap = false;
     int overlapIssueCount = 0;
     for (const QJsonValue &issueValue : issues) {
@@ -2731,28 +2756,24 @@ void QmlAgentIntegrationTest::qtQuickControlsExposeAuthoredIds()
                 const QString text = evidenceValue.toString();
                 foundDescendantEvidence = foundDescendantEvidence
                         || text.contains(QLatin1String("descendant outside authored ancestor bounds"));
+                // Which neighbor the swiped-open delegate overlaps depends on
+                // the Controls style's layout metrics; assert that blocker
+                // evidence is promoted, not which control it names.
                 foundBlockerEvidence = foundBlockerEvidence
-                        || text.contains(QLatin1String("blockingItem=SpinBox"));
+                        || text.contains(QLatin1String("blockingItem="));
             }
             QVERIFY2(foundDescendantEvidence && foundBlockerEvidence,
                      qPrintable(QStringLiteral("Expected SwipeDelegate overlap to carry promoted descendant/blocker evidence: %1")
                                         .arg(QString::fromUtf8(QJsonDocument(issue)
                                                                .toJson(QJsonDocument::Compact)))));
-        }
-        if (target.value(QStringLiteral("qmlId")).toString() == QLatin1String("controlsPage")) {
-            foundSwipeViewOverlap = true;
             const QJsonArray reasons = issue.value(QStringLiteral("actionability")).toObject()
                     .value(QStringLiteral("reasons")).toArray();
             QVERIFY2(hasReason(reasons, QStringLiteral("blocked_by_item")),
-                     qPrintable(QStringLiteral("Expected SwipeView overlap issue to carry blocker evidence: %1")
+                     qPrintable(QStringLiteral("Expected overlap issue to carry blocker actionability evidence: %1")
                                         .arg(QString::fromUtf8(QJsonDocument(issue)
                                                                .toJson(QJsonDocument::Compact)))));
         }
     }
-    QVERIFY2(foundSwipeViewOverlap,
-             qPrintable(QStringLiteral("Expected Diagnostics.analyzeTree to promote authored SwipeView page overlap: %1")
-                                .arg(QString::fromUtf8(QJsonDocument(diagnosticsResult)
-                                                       .toJson(QJsonDocument::Compact)))));
     QVERIFY2(foundSwipeDelegateOverlap,
              qPrintable(QStringLiteral("Expected Diagnostics.analyzeTree to promote SwipeDelegate descendant overlap: %1")
                                 .arg(QString::fromUtf8(QJsonDocument(diagnosticsResult)
@@ -2839,10 +2860,17 @@ void QmlAgentIntegrationTest::diagnosticsReportLayoutFailures()
         for (const QJsonValue &child : children)
             collectRepeaterNodes(child.toObject());
     };
+    // Debug-service object ids are assigned on demand starting at 0, so id 0
+    // is a valid node, not a marker for Qt's internal root item. Collect the
+    // actual window root ids to verify diagnostics never blame them.
+    QSet<int> rootNodeIds;
     const QJsonArray windows = treeResponse->value(QStringLiteral("result")).toObject()
             .value(QStringLiteral("windows")).toArray();
-    for (const QJsonValue &window : windows)
-        collectRepeaterNodes(window.toObject().value(QStringLiteral("root")).toObject());
+    for (const QJsonValue &window : windows) {
+        const QJsonObject root = window.toObject().value(QStringLiteral("root")).toObject();
+        rootNodeIds.insert(root.value(QStringLiteral("nodeId")).toInt(-1));
+        collectRepeaterNodes(root);
+    }
     QVERIFY2(!repeaterNodeIds.isEmpty(), "Expected smoke app to expose Repeater nodes.");
 
     const QJsonArray issues = response->value(QStringLiteral("result")).toObject()
@@ -2858,7 +2886,7 @@ void QmlAgentIntegrationTest::diagnosticsReportLayoutFailures()
     for (const QJsonValue &issueValue : issues) {
         const QJsonObject issue = issueValue.toObject();
         const QString id = issue.value(QStringLiteral("id")).toString();
-        QVERIFY2(issue.value(QStringLiteral("nodeId")).toInt(-1) != 0,
+        QVERIFY2(!rootNodeIds.contains(issue.value(QStringLiteral("nodeId")).toInt(-1)),
                  qPrintable(QStringLiteral("Diagnostics should not report Qt's internal root item: %1")
                                     .arg(QString::fromUtf8(QJsonDocument(issue).toJson(QJsonDocument::Compact)))));
         QVERIFY2(!repeaterNodeIds.contains(issue.value(QStringLiteral("nodeId")).toInt(-1)),
@@ -3381,6 +3409,44 @@ void QmlAgentIntegrationTest::diagnosticsAnalyzeNodeHonorsChecks()
              qPrintable(QStringLiteral("Expected generic blocker evidence: %1")
                                 .arg(QString::fromUtf8(QJsonDocument(genericBlockedNode)
                                                        .toJson(QJsonDocument::Compact)))));
+
+    // Contrast pair: a label under its own control's anchors.fill MouseArea is
+    // NOT occluded — the enclosing surface belongs to a container that owns
+    // the label, so the click must go through and reach the control.
+    const auto labelledControlQueryResponse = invoke(&client, QStringLiteral("UI.query"), {
+        { QStringLiteral("selector"), QStringLiteral("text=\"Press me\"") },
+        { QStringLiteral("includeSource"), false },
+        { QStringLiteral("fields"), QJsonArray{
+            QStringLiteral("nodeId"),
+            QStringLiteral("actionable"),
+        } },
+    }, 71, &errorMessage);
+    QVERIFY2(labelledControlQueryResponse.has_value(), qPrintable(errorMessage));
+    const QJsonArray labelledControlMatches = labelledControlQueryResponse
+            ->value(QStringLiteral("result")).toObject()
+            .value(QStringLiteral("matches")).toArray();
+    QCOMPARE(labelledControlMatches.size(), 1);
+    QCOMPARE(labelledControlMatches.at(0).toObject()
+                     .value(QStringLiteral("actionable")).toBool(false), true);
+    const auto labelledControlClickResponse = invoke(&client, QStringLiteral("Input.clickNode"), {
+        { QStringLiteral("selector"), QStringLiteral("text=\"Press me\"") },
+    }, 72, &errorMessage);
+    QVERIFY2(labelledControlClickResponse.has_value(), qPrintable(errorMessage));
+    QCOMPARE(labelledControlClickResponse->value(QStringLiteral("result")).toObject()
+                     .value(QStringLiteral("delivered")).toBool(false), true);
+    const auto labelledControlVerifyResponse = invoke(&client, QStringLiteral("UI.waitFor"), {
+        { QStringLiteral("selector"), QStringLiteral("objectName=\"smoke.labelledControlClicked\"") },
+        { QStringLiteral("until"), QJsonObject{
+            { QStringLiteral("state"), QStringLiteral("found") },
+        } },
+        { QStringLiteral("timeoutMs"), 1000 },
+    }, 73, &errorMessage);
+    QVERIFY2(labelledControlVerifyResponse.has_value(), qPrintable(errorMessage));
+    QVERIFY2(labelledControlVerifyResponse->value(QStringLiteral("result")).toObject()
+                     .value(QStringLiteral("ok")).toBool(false),
+             qPrintable(QString::fromUtf8(QJsonDocument(
+                     labelledControlVerifyResponse->value(QStringLiteral("result")).toObject())
+                                                  .toJson(QJsonDocument::Compact))));
 
     const auto minSizeResponse = invoke(&client, QStringLiteral("Diagnostics.analyzeNode"), {
         { QStringLiteral("nodeId"), nodeId },
@@ -4097,7 +4163,8 @@ Window {
             .value(QStringLiteral("structuredContent")).toObject();
     QCOMPARE(reload.value(QStringLiteral("ok")).toBool(), true);
     QCOMPARE(reload.value(QStringLiteral("loader")).toString(), QStringLiteral("QQmlApplicationEngine"));
-    QCOMPARE(reload.value(QStringLiteral("windowPreserved")).toBool(), false);
+    // Reload re-creates the window but restores the previous geometry.
+    QCOMPARE(reload.value(QStringLiteral("windowPreserved")).toBool(), true);
 
     const QJsonObject subscribeResult = responses.value(5).value(QStringLiteral("result")).toObject();
     QCOMPARE(subscribeResult.value(QStringLiteral("isError")).toBool(), true);

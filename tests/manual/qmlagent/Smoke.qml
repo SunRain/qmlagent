@@ -11,6 +11,7 @@ Window {
     property int selectedDelegateIndex: -1
     property bool subscribedDynamicAdded: false
     property bool genericBlockedClicked: false
+    property bool labelledControlClicked: false
     property bool longPressed: false
     property bool secondaryWindowClicked: false
     property int bindingBase: 70
@@ -287,6 +288,28 @@ Window {
             width: 6
             height: 6
             color: "#023047"
+        }
+    }
+
+    Rectangle {
+        id: labelledControl
+        objectName: root.labelledControlClicked ? "smoke.labelledControlClicked"
+                                                : "smoke.labelledControl"
+        x: 190
+        y: 84
+        width: 70
+        height: 20
+        color: root.labelledControlClicked ? "#1a7f37" : "#6e7781"
+
+        Text {
+            anchors.centerIn: parent
+            text: "Press me"
+            color: "#ffffff"
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            onClicked: root.labelledControlClicked = true
         }
     }
 

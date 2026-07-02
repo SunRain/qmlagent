@@ -76,8 +76,13 @@ add_test(NAME qmlagent_tcp_smoke
     COMMAND tst_qmlagentintegration
 )
 
+# QT_QUICK_CONTROLS_STYLE=Basic: the suite verifies QmlAgent contracts, not
+# Qt's platform styles. The macOS native style paints AppKit NSViews, which
+# is crash-prone under the offscreen platform and responds differently to
+# synthetic drags; Basic keeps the run deterministic and identical across
+# macOS and Linux.
 set_tests_properties(qmlagent_tcp_smoke PROPERTIES
-    ENVIRONMENT "QTFRAMEWORK_BYPASS_LICENSE_CHECK=1;QT_QPA_PLATFORM=offscreen;QMLAGENT_SMOKE_APP=$<TARGET_FILE:qmlagent_smoke>;QMLAGENT_CONTROLS_APP=$<TARGET_FILE:qmlagent_controls_smoke>;QMLAGENT_FIXTURE_APP=$<TARGET_FILE:qmlagent_diagnostic_fixture>;QMLAGENT_FIXTURES_DIR=${CMAKE_SOURCE_DIR}/fixtures/diagnostics;QMLAGENT_WORKFLOW_FIXTURES_DIR=${CMAKE_SOURCE_DIR}/fixtures/workflows"
+    ENVIRONMENT "QTFRAMEWORK_BYPASS_LICENSE_CHECK=1;QT_QPA_PLATFORM=offscreen;QT_QUICK_CONTROLS_STYLE=Basic;QMLAGENT_SMOKE_APP=$<TARGET_FILE:qmlagent_smoke>;QMLAGENT_CONTROLS_APP=$<TARGET_FILE:qmlagent_controls_smoke>;QMLAGENT_FIXTURE_APP=$<TARGET_FILE:qmlagent_diagnostic_fixture>;QMLAGENT_FIXTURES_DIR=${CMAKE_SOURCE_DIR}/fixtures/diagnostics;QMLAGENT_WORKFLOW_FIXTURES_DIR=${CMAKE_SOURCE_DIR}/fixtures/workflows"
     ENVIRONMENT_MODIFICATION "QT_PLUGIN_PATH=path_list_prepend:${CMAKE_BINARY_DIR}/plugins"
     TIMEOUT 90
 )
