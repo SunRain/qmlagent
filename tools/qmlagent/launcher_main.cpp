@@ -956,8 +956,16 @@ int main(int argc, char **argv)
         return fail(controlError);
 
     target.setProcessChannelMode(QProcess::MergedChannels);
+    // Forward target output and keep a bounded copy so launch failures can
+    // diagnose the cause (for example Qt's "Debugging has not been enabled").
+    QString capturedTargetOutput;
     QObject::connect(&target, &QIODevice::readyRead, &target, [&]() {
-        QTextStream(stderr) << QString::fromUtf8(target.readAll());
+        const QString chunk = QString::fromUtf8(target.readAll());
+        QTextStream(stderr) << chunk;
+        capturedTargetOutput.append(chunk);
+        constexpr qsizetype MaxCapturedOutputBytes = 16384;
+        if (capturedTargetOutput.size() > MaxCapturedOutputBytes)
+            capturedTargetOutput.remove(0, capturedTargetOutput.size() - MaxCapturedOutputBytes);
     });
     QObject::connect(&app, &QCoreApplication::aboutToQuit, &app, [&]() {
         removeLauncherRegistryFiles(sessionId);
@@ -1015,13 +1023,29 @@ int main(int argc, char **argv)
     if (!connection.waitForConnected(timeoutMs)) {
         target.kill();
         target.waitForFinished();
-        return fail(QStringLiteral("Timed out waiting for target debug connection."));
+        if (capturedTargetOutput.contains(QLatin1String("Debugging has not been enabled"))) {
+            return fail(QStringLiteral(
+                    "Target was built without QML debugging: it printed \"Debugging has not "
+                    "been enabled\". Rebuild it with the QT_QML_DEBUG define, e.g. in CMake:\n"
+                    "  target_compile_definitions(<app> PRIVATE QT_QML_DEBUG)"));
+        }
+        return fail(QStringLiteral(
+                "Timed out waiting for target debug connection. If the target output above "
+                "shows no \"QML debugging is enabled\" line, rebuild it with the QT_QML_DEBUG "
+                "define (target_compile_definitions(<app> PRIVATE QT_QML_DEBUG))."));
     }
 
     if (agentClient.state() != QQmlDebugClient::Enabled) {
         target.kill();
         target.waitForFinished();
-        return fail(QStringLiteral("Target connected, but QmlAgent service is not enabled."));
+        // The launcher already passed services:QmlAgent, so the usual cause is
+        // the qmldbg_agent plugin missing from the Qt the target runs against.
+        return fail(QStringLiteral(
+                "Target connected, but the QmlAgent debug service is unavailable. The "
+                "qmldbg_agent plugin is likely missing from the Qt installation the target "
+                "links against: verify <Qt prefix>/plugins/qmltooling/ contains it and that "
+                "the target uses the same Qt where QmlAgent was installed (this launcher "
+                "runs Qt %1).").arg(QString::fromUtf8(qVersion())));
     }
 
     controlServer.setSessionReady(true);

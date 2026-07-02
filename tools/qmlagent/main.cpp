@@ -2903,8 +2903,12 @@ private:
         }
 
         if (m_client->state() != QQmlDebugClient::Enabled) {
-            m_lastError = QStringLiteral("Connected to %1:%2, but QmlAgent service is not enabled. "
-                                         "Launch the target with services:QmlAgent.")
+            m_lastError = QStringLiteral("Connected to %1:%2, but the QmlAgent service is not "
+                                         "enabled. Either the target was launched without "
+                                         "services:QmlAgent in -qmljsdebugger, or the "
+                                         "qmldbg_agent plugin is missing from the Qt the "
+                                         "target links against "
+                                         "(<Qt prefix>/plugins/qmltooling/).")
                                   .arg(host)
                                   .arg(port);
             disconnectTarget(QStringLiteral("service-not-enabled"));
@@ -2959,8 +2963,11 @@ private:
         }
 
         if (m_client->state() != QQmlDebugClient::Enabled) {
-            m_lastError = QStringLiteral("Connected on local socket %1, but QmlAgent service is not "
-                                         "enabled. Launch the target with services:QmlAgent.")
+            m_lastError = QStringLiteral("Connected on local socket %1, but the QmlAgent service "
+                                         "is not enabled. Either the target was launched without "
+                                         "services:QmlAgent in -qmljsdebugger, or the "
+                                         "qmldbg_agent plugin is missing from the Qt the target "
+                                         "links against (<Qt prefix>/plugins/qmltooling/).")
                                   .arg(path);
             disconnectTarget(QStringLiteral("service-not-enabled"));
             return targetStatus();
