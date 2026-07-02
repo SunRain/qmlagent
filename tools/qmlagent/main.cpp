@@ -47,6 +47,10 @@
 
 static constexpr int LauncherControlReplySlackMs = 1000;
 
+// Protocol version this client was written against; compared with the
+// protocolVersion a live QmlAgent session reports via Session.getInfo.
+static constexpr QLatin1StringView SupportedAgentProtocolVersion{ "0.1" };
+
 using QmlAgentMcp::jsonError;
 using QmlAgentMcp::jsonResponse;
 using QmlAgentMcp::toolErrorResult;
@@ -953,6 +957,10 @@ static QString argumentValue(const QStringList &arguments, const QString &name,
     return defaultValue;
 }
 
+// Static fallback for when no live session is reachable. Keep in sync with
+// agentMethods() in qqmlagentservice.cpp; a live session reports the
+// authoritative list through Session.getInfo "features" (which also omits
+// Runtime.* methods while runtime mutation is disabled).
 static QStringList qmlAgentProtocolMethods()
 {
     return {
@@ -983,6 +991,7 @@ static QStringList qmlAgentProtocolMethods()
         QStringLiteral("Input.dispatchTouchEvent"),
         QStringLiteral("Input.dispatchKeyEvent"),
         QStringLiteral("Input.typeText"),
+        QStringLiteral("Input.dismissPopup"),
         QStringLiteral("Render.captureScreenshot"),
         QStringLiteral("Runtime.setProperty"),
         QStringLiteral("Runtime.invokeMethod"),
@@ -992,7 +1001,8 @@ static QStringList qmlAgentProtocolMethods()
 
 static void printProtocolMethods(QTextStream &stream)
 {
-    stream << "QmlAgent protocol methods:\n";
+    stream << "QmlAgent protocol methods (static list; run qmlagentctl methods "
+              "with a live session for the authoritative set):\n";
     for (const QString &method : qmlAgentProtocolMethods())
         stream << "  " << method << '\n';
 }
@@ -1012,13 +1022,18 @@ static void printCallHelp()
            << "  qmlagentctl call Render.captureScreenshot --params '{\"omitData\":true,\"scale\":0.5}'\n";
 }
 
-static void printMethodsHelp()
+static void printMethodsHelp(const QStringList &methods, const QString &origin,
+                             const QString &versionWarning)
 {
     QTextStream stream(stdout);
     stream << "Usage:\n"
            << "  qmlagentctl methods\n"
            << "  qmlagentctl capabilities\n\n";
-    printProtocolMethods(stream);
+    stream << "QmlAgent protocol methods (" << origin << "):\n";
+    for (const QString &method : methods)
+        stream << "  " << method << '\n';
+    if (!versionWarning.isEmpty())
+        stream << '\n' << versionWarning << '\n';
     stream << "\nHigh-leverage methods for agent loops:\n"
            << "  UI.queryMany             batch several selector/property reads\n"
            << "  Input.scrollIntoView     recover from center_outside_viewport on clipped content\n"
@@ -1061,10 +1076,6 @@ static int runCtlSubcommand(const QStringList &arguments)
     }
 
     const QString command = arguments.at(1);
-    if (command == QLatin1String("methods") || command == QLatin1String("capabilities")) {
-        printMethodsHelp();
-        return 0;
-    }
 
     const QString format = argumentValue(arguments, QStringLiteral("--format"), QStringLiteral("pretty"));
     const QString wantedSession = argumentValue(arguments, QStringLiteral("--session"));
@@ -1072,6 +1083,53 @@ static int runCtlSubcommand(const QStringList &arguments)
     const int timeoutMs = argumentValue(arguments, QStringLiteral("--timeout"), QStringLiteral("5000")).toInt(&ok);
     if (!ok || timeoutMs <= 0)
         return fail(QStringLiteral("--timeout must be a positive integer."));
+
+    if (command == QLatin1String("methods") || command == QLatin1String("capabilities")) {
+        // Prefer the live session's Session.getInfo "features": it is the
+        // authoritative method list for the attached plugin build and omits
+        // methods that are currently disabled (Runtime.* without mutation).
+        // The static list is the offline fallback.
+        QStringList methods = qmlAgentProtocolMethods();
+        QString origin = QStringLiteral("static list, no live session reachable");
+        QString versionWarning;
+        LauncherSession methodsLauncher;
+        QString methodsError;
+        if (resolveLauncherSession(timeoutMs, &methodsLauncher, &methodsError, wantedSession)) {
+            const QJsonObject controlParams{
+                { QStringLiteral("method"), QStringLiteral("Session.getInfo") },
+                { QStringLiteral("params"), QJsonObject{} },
+            };
+            QString controlError;
+            const QJsonObject response = sendLauncherControlRequest(
+                    methodsLauncher.metadata,
+                    launcherControlTimeoutMs(QStringLiteral("QmlAgent.request"), controlParams,
+                                             timeoutMs),
+                    QStringLiteral("QmlAgent.request"), controlParams, &controlError);
+            const QJsonObject info = response.value(QStringLiteral("result")).toObject()
+                    .value(QStringLiteral("result")).toObject();
+            const QJsonArray features = info.value(QStringLiteral("features")).toArray();
+            if (controlError.isEmpty() && !features.isEmpty()) {
+                methods.clear();
+                for (const QJsonValue &feature : features)
+                    methods.append(feature.toString());
+                const QString remoteVersion =
+                        info.value(QStringLiteral("protocolVersion")).toString();
+                origin = QStringLiteral("live session %1, protocolVersion %2")
+                                 .arg(methodsLauncher.metadata
+                                              .value(QStringLiteral("launcherSession")).toString(),
+                                      remoteVersion);
+                if (!remoteVersion.isEmpty()
+                        && remoteVersion != SupportedAgentProtocolVersion) {
+                    versionWarning = QStringLiteral(
+                            "Warning: target reports protocolVersion %1 but this qmlagentctl "
+                            "supports %2; methods or result shapes may differ.")
+                                             .arg(remoteVersion, SupportedAgentProtocolVersion);
+                }
+            }
+        }
+        printMethodsHelp(methods, origin, versionWarning);
+        return 0;
+    }
 
     if (command == QLatin1String("sessions")) {
         const QList<LauncherSession> sessions = discoverLauncherSessions(timeoutMs);
