@@ -851,7 +851,7 @@ int main(int argc, char **argv)
 
     QCoreApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("qmlagent-launcher"));
-    QCoreApplication::setApplicationVersion(QStringLiteral("0.1"));
+    QCoreApplication::setApplicationVersion(QStringLiteral(QMLAGENT_VERSION_STR));
 
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral(

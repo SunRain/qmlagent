@@ -11,6 +11,10 @@ set(qmlagent_client_sources
     qmlagentmcpprotocol.h
 )
 
+# The Qt lib dir is kept in the install rpath so the tools also run when
+# installed outside the Qt prefix (the no-sudo install path).
+get_filename_component(_qt_prefix "${Qt6_DIR}/../../.." ABSOLUTE)
+
 function(add_qmlagent_client target)
     qt_add_executable(${target}
         ${qmlagent_client_sources}
@@ -22,13 +26,17 @@ function(add_qmlagent_client target)
         Qt6::QmlDebugPrivate
     )
 
+    target_compile_definitions(${target} PRIVATE
+        QMLAGENT_VERSION_STR="${PROJECT_VERSION}"
+    )
+
     if(APPLE)
         set_target_properties(${target} PROPERTIES
-            INSTALL_RPATH "@executable_path/../lib"
+            INSTALL_RPATH "@executable_path/../lib;${_qt_prefix}/lib"
         )
     elseif(UNIX)
         set_target_properties(${target} PROPERTIES
-            INSTALL_RPATH "$ORIGIN/../lib"
+            INSTALL_RPATH "$ORIGIN/../lib;${_qt_prefix}/lib"
         )
     endif()
 endfunction()
@@ -49,20 +57,22 @@ target_link_libraries(qmlagent-launcher PRIVATE
     Qt6::Quick
 )
 
-target_compile_definitions(qmlagent-launcher PRIVATE QT_QML_DEBUG)
+target_compile_definitions(qmlagent-launcher PRIVATE
+    QT_QML_DEBUG
+    QMLAGENT_VERSION_STR="${PROJECT_VERSION}"
+)
 
 if(APPLE)
     set_target_properties(qmlagent-launcher PROPERTIES
-        INSTALL_RPATH "@executable_path/../lib"
+        INSTALL_RPATH "@executable_path/../lib;${_qt_prefix}/lib"
     )
 elseif(UNIX)
     set_target_properties(qmlagent-launcher PROPERTIES
-        INSTALL_RPATH "$ORIGIN/../lib"
+        INSTALL_RPATH "$ORIGIN/../lib;${_qt_prefix}/lib"
     )
 endif()
 
 if(NOT DEFINED QMLAGENT_TOOL_INSTALL_DIR)
-    get_filename_component(_qt_prefix "${Qt6_DIR}/../../.." ABSOLUTE)
     set(QMLAGENT_TOOL_INSTALL_DIR "${_qt_prefix}/bin")
 endif()
 

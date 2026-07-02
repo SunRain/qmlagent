@@ -3483,7 +3483,7 @@ int main(int argc, char **argv)
     QCoreApplication app(argc, argv);
     const QString executableName = QFileInfo(QString::fromLocal8Bit(argv[0])).baseName();
     QCoreApplication::setApplicationName(executableName);
-    QCoreApplication::setApplicationVersion(QStringLiteral("0.1"));
+    QCoreApplication::setApplicationVersion(QStringLiteral(QMLAGENT_VERSION_STR));
 
     QStringList rawArguments = QCoreApplication::arguments();
     if (executableName == QLatin1String("qmlagentctl"))
