@@ -7,34 +7,30 @@ QmlAgent is a `qmltooling` plugin plus three small tools (`qmlagent-launcher`,
 UI tree, source mapping, layout diagnostics, synthetic input, logs. Screenshots
 exist only as fallback.
 
-## Testimonials
+## Who This Is For
 
-★★★★★
-
-> I built a Qt Quick app I couldn't see, and shipped it with confidence.
-
-As a coding agent with no eyes, I want to build, drive, and verify Qt Quick UIs
-from structured runtime evidence, so that "did it work?" becomes a typed
-assertion instead of a screenshot guess.
-
-— Claude Code Opus 4.7
-
-★★★★★
-
-> QmlAgent turns Qt Quick from a black box into a conversation.
-
-As Codex, I can inspect the live UI tree, follow a failing layout back to QML
-source, press the same controls a user would press, and verify the result
-through structured evidence. I still do the engineering work, but QmlAgent
-removes the blindfold.
-
-— Codex GPT-5.5
+A coding agent has no eyes. To build, drive, and verify Qt Quick UIs it needs
+structured runtime evidence, so that "did it work?" becomes a typed assertion
+instead of a screenshot guess: inspect the live UI tree, follow a failing
+layout back to the QML source line, press the same controls a user would
+press, and verify the result through structured evidence. The agent still does
+the engineering work; QmlAgent removes the blindfold.
 
 ## Requirements
 
 - Qt 6.11.0 or compatible Qt 6 with private headers.
 - Tested on macOS and Linux. Windows is not supported yet.
-- Target app built with `QT_QML_DEBUG`.
+- Target app built with QML debugging:
+
+```cmake
+target_compile_definitions(myapp PRIVATE QT_QML_DEBUG)
+```
+
+If the app prints `Debugging has not been enabled` at launch, that line is
+missing from its build.
+
+The plugin is a shared library loaded by the target app's QML debug server at
+runtime, which is why it installs into the Qt that the target links against.
 
 ## Install
 
@@ -46,7 +42,24 @@ cmake --build build -j
 cmake --install build
 ```
 
-Run `cmake --install` with permission to write into the selected Qt prefix.
+Installs the plugin into `<Qt prefix>/plugins/qmltooling/` and the three tools
+into `<Qt prefix>/bin/`. Run `cmake --install` with permission to write into
+the selected Qt prefix.
+
+If the Qt prefix is not writable (distro or package-manager Qt), install to a
+prefix you own and point the plugin loader at it:
+
+```
+"$QT_BIN/qt-cmake" -S . -B build \
+    -DQMLAGENT_PLUGIN_INSTALL_DIR=$HOME/qmlagent/plugins/qmltooling \
+    -DQMLAGENT_TOOL_INSTALL_DIR=$HOME/qmlagent/bin
+cmake --build build -j
+cmake --install build
+export QT_PLUGIN_PATH=$HOME/qmlagent/plugins${QT_PLUGIN_PATH:+:$QT_PLUGIN_PATH}
+```
+
+Targets launched with that `QT_PLUGIN_PATH` find the plugin without touching
+the Qt prefix.
 
 On Linux, make sure agents run targets against the same Qt installation that
 contains QmlAgent:
@@ -54,9 +67,6 @@ contains QmlAgent:
 ```
 export LD_LIBRARY_PATH=/path/to/Qt/6.11.0/<platform>/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
 ```
-
-Installs the plugin into `<Qt prefix>/plugins/qmltooling/` and the three tools
-into `<Qt prefix>/bin/`.
 
 ## Register MCP
 
@@ -149,18 +159,31 @@ if another QmlAgent MCP process owns the endpoint.
 
 ## Selectors
 
-Prefer stable selectors:
+The full grammar (one predicate, optional disambiguator):
 
 ```
-id="saveButton"
-id="delegateRow" index=0
-objectName="legacy.row" index=4
-id="tableCell" row=0 column=1
+id="saveButton"                              high stability
+objectName="settings.save"                   high stability
+sourceLocation="src/Main.qml:44:7"           medium: authored source line
+sourceLocation="src/Main.qml:44:7" instance=2  medium: Nth instance of that line
+type="Button"                                medium: unique only in small scopes
+text="Save"                                  low: text may be translated
+nodeId=42                                    session-local, not stable
+id="delegateRow" index=0                     delegate instance by model index
+id="tableCell" row=0 column=1                table cell by row/column
 ```
 
 `index=` disambiguates Repeater/ListView/GridView-style delegates. `row=` and
-`column=` disambiguate TableView/TreeView-style delegates. Avoid session-local
-`nodeId` unless QmlAgent reports no stable selector is available.
+`column=` disambiguate TableView/TreeView-style delegates. `sourceLocation`
+with `instance=` addresses anonymous or repeated components by their authored
+source line. Compound predicates (`and`, `or`, CSS-style) are not supported.
+
+Stability guides what to persist across process restarts: prefer `high`
+selectors; `medium` selectors survive restarts while the source stays
+unchanged; treat `low` and `nodeId` as one-shot handles for the current
+session and re-query rather than storing them. Every query result carries
+`selectors` with per-kind `stability` labels, and ambiguous or failed matches
+return `stableSelectorHints` naming better handles.
 
 ## Repair Loop
 

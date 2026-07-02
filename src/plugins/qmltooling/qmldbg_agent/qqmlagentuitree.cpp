@@ -1609,6 +1609,7 @@ static QJsonArray selectorSyntaxExamples()
         QStringLiteral("text=\"Save\""),
         QStringLiteral("nodeId=42"),
         QStringLiteral("sourceLocation=\"src/Main.qml:44:7\""),
+        QStringLiteral("sourceLocation=\"src/Main.qml:44:7\" instance=2"),
         QStringLiteral("id=\"delegateRoot\" index=4"),
         QStringLiteral("id=\"tableCell\" row=0 column=1"),
     };

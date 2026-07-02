@@ -13,13 +13,14 @@ their descriptions for exact parameters.
 
 1. Find the Qt installation `bin/` that contains `qt-cmake`,
    `qmlagent-launcher`, `qmlagentctl`, and `qmlagent-mcp`.
-2. Build the target through CMake with `QT_QML_DEBUG`.
+2. Build the target with QML debugging enabled:
+   `target_compile_definitions(myapp PRIVATE QT_QML_DEBUG)` in its CMake.
 3. Prefer `qmlagent-launcher` for all agent-owned sessions.
 4. After launch, call `qmlagent.target_status` first when native MCP tools are
    available.
 
-If the app prints `Debugging has not been enabled`, fix the build. It means the
-target was not built with QML debugging enabled; QmlAgent cannot attach.
+If the app prints `Debugging has not been enabled`, the target lacks that
+compile definition; QmlAgent cannot attach until it is rebuilt with it.
 
 ## Launch Modes
 
@@ -113,11 +114,33 @@ Only request image bytes when visual evidence is explicitly needed. Prefer
 base64 does not enter the agent context. For MCP screenshot bytes, pass
 `scale` and/or `region` with `includeData:true`.
 
+## Selector Grammar
+
+One predicate, optional disambiguator. In stability order:
+
+```txt
+id="saveButton"                                # high
+objectName="settings.save"                     # high
+sourceLocation="src/Main.qml:44:7"             # medium, authored source line
+sourceLocation="src/Main.qml:44:7" instance=2  # medium, Nth instance of line
+type="Button"                                  # medium in small scopes
+text="Save"                                    # low, may be translated
+nodeId=42                                      # session-local only
+id="delegateRow" index=0                       # delegate by model index
+id="tableCell" row=0 column=1                  # table cell
+```
+
+Persist only high selectors across restarts; re-query low/`nodeId` handles
+instead of storing them. Results carry per-selector `stability` labels and
+ambiguous matches return `stableSelectorHints`. Compound predicates are not
+supported.
+
 ## Evidence Discipline
 
 - Prefer stable QML `id` selectors over session-local `nodeId`.
 - For repeated delegates, try `id="delegateId" index=0` before adding
-  automation-only `objectName`.
+  automation-only `objectName`. For anonymous or repeated components without
+  ids, use the `sourceLocation` selector the query result suggests.
 - When geometry/state looks computed, call
   `qmlagent.diagnostics_analyze_binding` for the property. Treat classic
   `QQmlBinding` dependency values as runtime evidence. Treat
@@ -151,5 +174,3 @@ base64 does not enter the agent context. For MCP screenshot bytes, pass
   `UI.*` queries.
 - Keep one active workflow owner per target session; multiple agents can race
   semantically even when launcher routing works.
-- Write `REPORT.md` when the task asks for feedback, including commands/tools
-  used, runtime evidence, what QmlAgent helped with, and what was awkward.
