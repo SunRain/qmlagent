@@ -167,9 +167,10 @@ supported.
   (or shell `qmlagentctl dismiss-popup`, `--all` for stacked popups). It
   reports `remainingPopupCount` so you can confirm the popup actually closed.
   Note menus and dialogs toggle: re-clicking the trigger while open closes it.
-- To enter new text into an occupied field, use native `qmlagent_input_clear_text` followed by
-  `qmlagent_input_type_text`, or shell `qmlagentctl clear-text` followed by
-  `qmlagentctl type`, then verify with `UI.query` or `UI.waitFor`.
+- To enter new text into an occupied field, use `qmlagent_input_type_text`
+  with `replaceExisting=true` (one call), or shell `qmlagentctl clear-text`
+  followed by `qmlagentctl type`, then verify with `UI.query` or `UI.waitFor`.
+  `qmlagent_input_clear_text` remains for clearing without typing.
 - Use input/workflow results plus `UI.query`, diagnostics, logs, or source
   evidence as proof. Runtime mutation is setup-only.
 - Use `qmlagent_input_long_press` or `qmlagent_workflow_long_press_and_wait`

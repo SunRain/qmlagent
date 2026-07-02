@@ -98,7 +98,7 @@ QJsonArray toolList()
 
     return {
         tool(QStringLiteral("qmlagent_connect_tcp"),
-             QStringLiteral("Attach this MCP server directly to a manually launched Qt app using -qmljsdebugger=port:<port>,host:<host>,services:QmlAgent. Prefer qmlagent-launcher, which avoids TCP ports. If direct TCP is required, pass the exact port from the launch command; when omitted the client uses a deterministic per-user fallback port. Do not scan or pre-bind ports. If the app was started with qmlagent-launcher preview <Main.qml> or qmlagent-launcher app <executable>, request/response tools auto-route through the launcher and this attach step is not needed. Use direct attach for streamed subscriptions such as qmlagent_ui_subscribe and qmlagent_log_enable."),
+             QStringLiteral("Attach directly over TCP to an app launched manually with -qmljsdebugger=port:<port>,host:<host>,services:QmlAgent; pass the exact port from that command. Not needed for qmlagent-launcher sessions — those auto-route. Use only for manual targets or streamed subscriptions (qmlagent_ui_subscribe, qmlagent_log_enable). Verify with qmlagent_target_status."),
              schema({
                  { QStringLiteral("host"), QJsonObject{
                      { QStringLiteral("type"), QStringLiteral("string") },
@@ -114,7 +114,7 @@ QJsonArray toolList()
                  } },
              })),
         tool(QStringLiteral("qmlagent_connect_local_socket"),
-             QStringLiteral("Attach this MCP server directly to a manually launched Qt app using -qmljsdebugger=file:<path>,services:QmlAgent. If the app was started with qmlagent-launcher preview <Main.qml> or qmlagent-launcher app <executable>, request/response tools auto-route through the launcher and this attach step is not needed. Use direct attach for streamed subscriptions such as qmlagent_ui_subscribe and qmlagent_log_enable."),
+             QStringLiteral("Attach directly over a local socket to an app launched manually with -qmljsdebugger=file:<path>,services:QmlAgent. Not needed for qmlagent-launcher sessions — those auto-route. Use only for manual targets or streamed subscriptions. Verify with qmlagent_target_status."),
              schema({
                  { QStringLiteral("path"), QJsonObject{
                      { QStringLiteral("type"), QStringLiteral("string") },
@@ -129,10 +129,7 @@ QJsonArray toolList()
              QStringLiteral("Detach from the current QmlAgent target. Use before relaunching or switching target processes."),
              schema({})),
         tool(QStringLiteral("qmlagent_target_status"),
-             QStringLiteral("Start here. Return whether this MCP server is directly attached and whether a qmlagent-launcher gateway is available for automatic request/response routing. If a single qmlagent-launcher session exists, qmlagent_ui_query, qmlagent_ui_query_many, qmlagent_input_click, qmlagent_input_scroll_into_view, qmlagent_ui_wait_for, qmlagent_preview_reload, and workflow tools work without qmlagent_connect_tcp/connect_local_socket. Direct attach is still required for streamed subscriptions."),
-             schema({})),
-        tool(QStringLiteral("qmlagent_launcher_status"),
-             QStringLiteral("Discover qmlagent-launcher sessions in the current workspace. If exactly one live session exists, target-backed request/response MCP tools auto-route through it. The result names the exact launch form and whether qmlagent_preview_reload is supported."),
+             QStringLiteral("Start here: report attach state and qmlagent-launcher gateway routing. With exactly one launcher session, target-backed tools route through it automatically; with several, launcherGateway.sessions lists ids for pinning. Direct attach is only for manually launched targets or streamed subscriptions."),
              schema({})),
         tool(QStringLiteral("qmlagent_preview_reload"),
              QStringLiteral("Reload the root QML file for a session started exactly with qmlagent-launcher preview <Main.qml>. This does not work for qmlagent-launcher app <executable> sessions; those must rebuild/relaunch unless the app owns its own reload boundary."),
@@ -206,7 +203,7 @@ QJsonArray toolList()
                  } },
              }, { QStringLiteral("queries") })),
         tool(QStringLiteral("qmlagent_ui_wait_for"),
-             QStringLiteral("Agent-first semantic wait tool. Wait until a selector is found/notFound or one selected node property satisfies a predicate. Use after qmlagent_input_click, qmlagent_input_drag, qmlagent_input_wheel, loaders, popups, Drawer/Menu/Popup/Dialog transitions, and animated controls instead of sleeps, retry loops, screenshots, or frame-count tuning. For Qt Quick Controls popups, wait for generic popup evidence such as type=\"QQuickPopupItem\" or a visible popup property, then query the popup contents; style implementations may expose choices as ItemDelegate rather than MenuItem. If qmlagent_workflow_click_and_wait is not visible in lazy native-tool discovery, use qmlagent_input_click followed by this qmlagent_ui_wait_for tool. Timeout results include targeted nextHints for UI.query/Diagnostics follow-up."),
+             QStringLiteral("Wait until a selector is found/notFound or one matched node's property satisfies a predicate (=, !=, >, >=, <, <=, contains, startsWith, endsWith). Use after input, transitions, loaders, popups, and animations instead of sleeps or retry loops. Cannot wait on multiple nodes at once — property predicates require exactly one match. Timeout results carry nextHints for UI.query/Diagnostics follow-up."),
              schema({
                  { QStringLiteral("selector"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("string") } } },
                  { QStringLiteral("until"), waitUntilSchema() },
@@ -394,8 +391,14 @@ QJsonArray toolList()
                  { QStringLiteral("modifiers"), stringArray },
              }))),
         tool(QStringLiteral("qmlagent_input_type_text"),
-             QStringLiteral("Type text through synthetic key input, optionally targeting selector/nodeId first. This appends/replaces according to the target's normal cursor/selection state; use qmlagent_input_clear_text first when you need an empty field. If click-to-focus fails, call qmlagent_input_focus on the same selector/nodeId, then retry qmlagent_input_type_text; focus_failed results include nextHints."),
-             schema(withNodeRef({ { QStringLiteral("text"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("string") } } } }),
+             QStringLiteral("Type text through synthetic key input, optionally targeting selector/nodeId first. Pass replaceExisting=true to clear the field's current content first in the same call; without it, text lands at the target's normal cursor/selection state. If click-to-focus fails, call qmlagent_input_focus on the same selector/nodeId, then retry; focus_failed results include nextHints. Verify final text with qmlagent_ui_query or qmlagent_ui_wait_for."),
+             schema(withNodeRef({
+                        { QStringLiteral("text"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("string") } } },
+                        { QStringLiteral("replaceExisting"), QJsonObject{
+                            { QStringLiteral("type"), QStringLiteral("boolean") },
+                            { QStringLiteral("description"), QStringLiteral("Clear existing content before typing (one call instead of clear_text + type_text).") },
+                        } },
+                    }),
                     { QStringLiteral("text") })),
         tool(QStringLiteral("qmlagent_input_clear_text"),
              QStringLiteral("Clear a TextInput/TextField/TextArea-style target through the same Input.typeText path: focus target, select existing text when available, then delete through Qt key input. Use qmlagent_input_type_text afterward to enter new text, and verify final text/state with qmlagent_ui_query or qmlagent_ui_wait_for."),

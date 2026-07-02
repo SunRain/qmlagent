@@ -226,12 +226,14 @@ void tst_QQmlAgentProtocol::mcpToolSchemasExposeAgentFirstContracts()
                     .value(QStringLiteral("properties")).toObject()
                     .contains(QStringLiteral("settle")));
 
+    // target_status is the entry point; per-tool steering lives in the
+    // in-band agentToolGuide payload, not in this description.
     const QJsonObject targetStatus = mcpToolByName(QStringLiteral("qmlagent_target_status"));
     QVERIFY(!targetStatus.isEmpty());
     const QString targetStatusDescription = targetStatus.value(QStringLiteral("description")).toString();
-    QVERIFY2(targetStatusDescription.contains(QStringLiteral("qmlagent_ui_query_many")),
+    QVERIFY2(targetStatusDescription.contains(QStringLiteral("Start here")),
              qPrintable(targetStatusDescription));
-    QVERIFY2(targetStatusDescription.contains(QStringLiteral("qmlagent_input_scroll_into_view")),
+    QVERIFY2(targetStatusDescription.contains(QStringLiteral("launcherGateway.sessions")),
              qPrintable(targetStatusDescription));
 
     const QJsonObject queryMany = mcpToolByName(QStringLiteral("qmlagent_ui_query_many"));

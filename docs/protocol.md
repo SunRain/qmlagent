@@ -336,6 +336,6 @@ The `qmlagent` MCP server (`tools/qmlagent`) maps tools onto protocol methods:
 | `qmlagent_log_enable` / `qmlagent_log_get_entries` | `Log.enable` / `Log.getEntries` |
 | `qmlagent_render_capture_screenshot` | `Render.captureScreenshot` |
 | `qmlagent_source_resolve` | `Source.resolveNode` |
-| `qmlagent_launcher_status` / `qmlagent_launcher_stop` / `qmlagent_preview_reload` | launcher control `Session.status` / `Session.stop` / `Preview.reload` |
+| `qmlagent_launcher_stop` / `qmlagent_preview_reload` | launcher control `Session.stop` / `Preview.reload` (launcher discovery is embedded in `qmlagent_target_status`) |
 | `qmlagent_workflow_click` / `workflow_click_and_wait` / `workflow_long_press_and_wait` / `workflow_key` | client-side compositions (query → input → wait → verify) of the methods above; no dedicated protocol method |
 | `qmlagent_connect_tcp` / `connect_local_socket` / `disconnect` / `target_status` | MCP connection management; no protocol method |

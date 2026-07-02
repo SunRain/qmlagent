@@ -2075,6 +2075,8 @@ private:
         if (name == QLatin1String("qmlagent_input_type_text")) {
             *targetMethod = QStringLiteral("Input.typeText");
             *targetParams = { { QStringLiteral("text"), arguments.value(QStringLiteral("text")) } };
+            if (arguments.value(QStringLiteral("replaceExisting")).toBool(false))
+                targetParams->insert(QStringLiteral("replaceExisting"), true);
             const bool hasSelector = arguments.contains(QStringLiteral("selector"))
                     && !arguments.value(QStringLiteral("selector")).toString().isEmpty();
             const bool hasNodeId = arguments.contains(QStringLiteral("nodeId"))
@@ -2316,23 +2318,6 @@ private:
     {
         if (name == QLatin1String("qmlagent_target_status")) {
             writeMessage(jsonResponse(requestId, toolResult(targetStatus())));
-            return true;
-        }
-
-        if (name == QLatin1String("qmlagent_launcher_status")) {
-            const QList<LauncherSession> sessions = discoverLauncherSessions(m_timeoutMs);
-            const QJsonArray recentExits = recentLauncherExitReports();
-            writeMessage(jsonResponse(requestId, toolResult(QJsonObject{
-                { QStringLiteral("ok"), true },
-                { QStringLiteral("sessionCount"), sessions.size() },
-                { QStringLiteral("sessions"), launcherSessionSummaries(sessions) },
-                { QStringLiteral("recentExitCount"), recentExits.size() },
-                { QStringLiteral("recentExits"), recentExits },
-                { QStringLiteral("workflows"), QJsonObject{
-                    { QStringLiteral("preview"), QStringLiteral("qmlagent-launcher preview <Main.qml> enables qmlagent_preview_reload") },
-                    { QStringLiteral("application"), QStringLiteral("qmlagent-launcher app <executable> does not support preview reload") },
-                } },
-            })));
             return true;
         }
 
@@ -2587,7 +2572,7 @@ private:
                 singleLauncher = launcherSessionSummaries({ session }).first().toObject();
             }
         }
-        status.insert(QStringLiteral("launcherGateway"), QJsonObject{
+        QJsonObject launcherGateway{
             { QStringLiteral("available"), reachableLauncherCount == 1 },
             { QStringLiteral("reachableSessionCount"), reachableLauncherCount },
             { QStringLiteral("routing"),
@@ -2595,7 +2580,14 @@ private:
                       ? QStringLiteral("Target-backed MCP tools route through qmlagent-launcher automatically when no direct attach is active.")
                       : QStringLiteral("Start exactly one qmlagent-launcher session for automatic gateway routing.") },
             { QStringLiteral("session"), reachableLauncherCount == 1 ? QJsonValue(singleLauncher) : QJsonValue() },
-        });
+        };
+        // With several live sessions, list them all so an agent can pin one
+        // (qmlagentctl --session <id>) without a separate discovery tool.
+        if (reachableLauncherCount > 1) {
+            launcherGateway.insert(QStringLiteral("sessions"),
+                                   launcherSessionSummaries(launcherSessions));
+        }
+        status.insert(QStringLiteral("launcherGateway"), launcherGateway);
         if (!recentLauncherExits.isEmpty()) {
             status.insert(QStringLiteral("recentLauncherExitCount"), recentLauncherExits.size());
             status.insert(QStringLiteral("recentLauncherExits"), recentLauncherExits);
