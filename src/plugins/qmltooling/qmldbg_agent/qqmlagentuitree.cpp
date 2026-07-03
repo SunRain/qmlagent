@@ -239,7 +239,18 @@ struct SelectorUniquenessIndex
     // sourceLocation="X" instance=N. Computed once here so emission and
     // resolution assign the same ordinal to the same object.
     QHash<const QObject *, int> sourceLocationOrdinal;
+    // Prospective delegate composite selector texts (id/objectName/source +
+    // index or row/column), counted tree-wide. Two sibling views whose
+    // delegates share a delegate-local id produce the same composite for the
+    // same cell coordinates, so a "medium, round-trips to one node" claim
+    // must be backed by a count here (F-021).
+    QHash<QString, int> delegateCompositeCounts;
 };
+
+static int readableDelegateModelIndex(QObject *object);
+static int readableDelegateRow(QObject *object);
+static int readableDelegateColumn(QObject *object);
+static bool hasTableLikeViewAncestor(QObject *object);
 
 // A source location is a usable selector only when it is app-authored and
 // line-precise. Framework style/template QML (qrc:/qt-project.org, QtQuick
@@ -274,6 +285,21 @@ static SelectorUniquenessIndex buildSelectorUniquenessIndex()
     SelectorUniquenessIndex index;
     // Objects per source-location selector, assigned ordinals after the walk.
     QHash<QString, QVector<QObject *>> sourceGroups;
+
+    // Nearest enclosing delegate context, inherited down the subtree the way
+    // applyDelegateContext/applyDelegateCellContext annotate every descendant.
+    struct DelegateContext
+    {
+        int row = -1;
+        int column = -1;
+        int modelIndex = -1;
+    };
+    struct WalkEntry
+    {
+        QQuickItem *item = nullptr;
+        DelegateContext context;
+    };
+
     const QWindowList windows = QGuiApplication::allWindows();
     for (QWindow *window : windows) {
         QQuickWindow *quickWindow = qobject_cast<QQuickWindow *>(window);
@@ -284,10 +310,11 @@ static SelectorUniquenessIndex buildSelectorUniquenessIndex()
             ++index.idCounts[windowQmlId];
         if (!quickWindow->objectName().isEmpty())
             ++index.objectNameCounts[quickWindow->objectName()];
-        QVector<QQuickItem *> stack{ quickWindow->contentItem() };
+        QVector<WalkEntry> stack{ { quickWindow->contentItem(), {} } };
         QSet<QQuickItem *> seen;
         while (!stack.isEmpty()) {
-            QQuickItem *item = stack.takeLast();
+            const WalkEntry entry = stack.takeLast();
+            QQuickItem *item = entry.item;
             if (!item || seen.contains(item))
                 continue;
             seen.insert(item);
@@ -303,9 +330,47 @@ static SelectorUniquenessIndex buildSelectorUniquenessIndex()
             const QString sourceSelector = sourceLocationSelectorForObject(item);
             if (!sourceSelector.isEmpty())
                 sourceGroups[sourceSelector].append(item);
+
+            // Delegate roots establish the context; descendants inherit it,
+            // matching the recursive annotation on the emission side.
+            DelegateContext context = entry.context;
+            const int row = readableDelegateRow(item);
+            const int column = readableDelegateColumn(item);
+            if (row >= 0 && column >= 0 && hasTableLikeViewAncestor(item)) {
+                context = { row, column, -1 };
+            } else {
+                const int modelIndex = readableDelegateModelIndex(item);
+                if (modelIndex >= 0)
+                    context = { -1, -1, modelIndex };
+            }
+            const QString stableIdKind = !qmlId.isEmpty()
+                    ? QStringLiteral("id")
+                    : (!item->objectName().isEmpty() ? QStringLiteral("objectName") : QString());
+            const QString stableId = !qmlId.isEmpty() ? qmlId : item->objectName();
+            if (context.row >= 0 && context.column >= 0) {
+                if (!stableIdKind.isEmpty()) {
+                    ++index.delegateCompositeCounts[QStringLiteral("%1=\"%2\" row=%3 column=%4")
+                            .arg(stableIdKind, stableId).arg(context.row).arg(context.column)];
+                }
+                if (!sourceSelector.isEmpty()) {
+                    ++index.delegateCompositeCounts[QStringLiteral(
+                            "sourceLocation=\"%1\" row=%2 column=%3")
+                            .arg(sourceSelector).arg(context.row).arg(context.column)];
+                }
+            } else if (context.modelIndex >= 0) {
+                if (!stableIdKind.isEmpty()) {
+                    ++index.delegateCompositeCounts[QStringLiteral("%1=\"%2\" index=%3")
+                            .arg(stableIdKind, stableId).arg(context.modelIndex)];
+                }
+                if (!sourceSelector.isEmpty()) {
+                    ++index.delegateCompositeCounts[QStringLiteral("sourceLocation=\"%1\" index=%2")
+                            .arg(sourceSelector).arg(context.modelIndex)];
+                }
+            }
+
             const QList<QQuickItem *> children = item->childItems();
             for (QQuickItem *child : children)
-                stack.append(child);
+                stack.append({ child, context });
         }
     }
     // Assign the per-instance ordinal by sorting each group on the stable
@@ -609,8 +674,47 @@ static QString delegateSourceSelectorValue(const QJsonObject &node)
     return {};
 }
 
+// A composite is only a "medium, resolves to one node" claim when its exact
+// text is unique tree-wide: two sibling views whose delegates share a
+// delegate-local id emit identical composites for the same coordinates
+// (F-021). Unique count 0 means the uniqueness walk did not model this node
+// (e.g. nested delegate contexts); keep the historical claim in that case.
+static bool delegateCompositeIsUnique(const SelectorUniquenessIndex &uniqueness,
+                                      const QString &selectorText)
+{
+    return uniqueness.delegateCompositeCounts.value(selectorText, 0) <= 1;
+}
+
+// Delegate context can be applied to one node twice: once by the delegate
+// root's recursive annotation and once directly, because row/column are
+// context properties visible on every descendant of a table delegate. The
+// composite must not be appended twice.
+static bool selectorsContainValue(const QJsonArray &selectors, const QString &value)
+{
+    for (const QJsonValue &entry : selectors) {
+        if (entry.toObject().value(QStringLiteral("value")).toString() == value)
+            return true;
+    }
+    return false;
+}
+
+// Fallback qualifier for a colliding id composite: the node's own authored
+// source line, which differs between two views' delegates even when their
+// delegate-local ids match.
+static QString nodeSourceSelectorValue(const QJsonObject &node)
+{
+    const QString fromSelectors = delegateSourceSelectorValue(node);
+    if (!fromSelectors.isEmpty())
+        return fromSelectors;
+    const QJsonObject location = node.value(QStringLiteral("sourceLocation")).toObject();
+    if (!sourceLocationIsAddressable(location))
+        return {};
+    return sourceLocationSelectorValue(location);
+}
+
 static QJsonObject applyDelegateContext(QJsonObject node, int delegateIndex,
-                                        const QString &indexSource)
+                                        const QString &indexSource,
+                                        const SelectorUniquenessIndex &uniqueness)
 {
     QJsonObject delegate = node.value(QStringLiteral("delegate")).toObject();
     delegate.insert(QStringLiteral("isDelegate"), true);
@@ -622,13 +726,31 @@ static QJsonObject applyDelegateContext(QJsonObject node, int delegateIndex,
     const QString stableIdKind = stableIdKindForDelegateSelector(node);
     const QString stableId = stableIdForDelegateSelector(node);
     if (!stableIdKind.isEmpty() && delegateIndexSourceSupportsSelector(indexSource)) {
+        const QString selectorText = QStringLiteral("%1=\"%2\" index=%3")
+                .arg(stableIdKind, stableId).arg(delegateIndex);
         QJsonArray selectors = node.value(QStringLiteral("selectors")).toArray();
-        selectors.append(selector(
-                QStringLiteral("%1+index").arg(stableIdKind),
-                QStringLiteral("%1=\"%2\" index=%3").arg(stableIdKind, stableId)
-                        .arg(delegateIndex),
-                QStringLiteral("medium"),
-                QStringLiteral("index changes when model order changes")));
+        if (selectorsContainValue(selectors, selectorText)) {
+            // Already annotated by an enclosing application of this context.
+        } else if (delegateCompositeIsUnique(uniqueness, selectorText)) {
+            selectors.append(selector(
+                    QStringLiteral("%1+index").arg(stableIdKind), selectorText,
+                    QStringLiteral("medium"),
+                    QStringLiteral("index changes when model order changes")));
+        } else {
+            selectors.append(selector(
+                    QStringLiteral("%1+index").arg(stableIdKind), selectorText,
+                    QStringLiteral("low"),
+                    QStringLiteral("same id and index exist in another view; use the sourceLocation composite")));
+            const QString sourceValue = nodeSourceSelectorValue(node);
+            const QString sourceText = QStringLiteral("sourceLocation=\"%1\" index=%2")
+                    .arg(sourceValue).arg(delegateIndex);
+            if (!sourceValue.isEmpty() && delegateCompositeIsUnique(uniqueness, sourceText)) {
+                selectors.append(selector(
+                        QStringLiteral("sourceLocation+index"), sourceText,
+                        QStringLiteral("medium"),
+                        QStringLiteral("index changes when model order changes")));
+            }
+        }
         node.insert(QStringLiteral("selectors"), selectors);
     } else if (stableIdKind.isEmpty()
                && delegateIndexSourceSupportsSelector(indexSource)) {
@@ -636,28 +758,35 @@ static QJsonObject applyDelegateContext(QJsonObject node, int delegateIndex,
         // location instead of an id (Phase 2 of the addressability work).
         const QString sourceValue = delegateSourceSelectorValue(node);
         if (!sourceValue.isEmpty()) {
+            const QString sourceText = QStringLiteral("sourceLocation=\"%1\" index=%2")
+                    .arg(sourceValue).arg(delegateIndex);
+            const bool unique = delegateCompositeIsUnique(uniqueness, sourceText);
             QJsonArray selectors = node.value(QStringLiteral("selectors")).toArray();
-            selectors.append(selector(
-                    QStringLiteral("sourceLocation+index"),
-                    QStringLiteral("sourceLocation=\"%1\" index=%2")
-                            .arg(sourceValue).arg(delegateIndex),
-                    QStringLiteral("medium"),
-                    QStringLiteral("anonymous delegate; index changes when model order changes")));
-            node.insert(QStringLiteral("selectors"), selectors);
+            if (!selectorsContainValue(selectors, sourceText)) {
+                selectors.append(selector(
+                        QStringLiteral("sourceLocation+index"), sourceText,
+                        unique ? QStringLiteral("medium") : QStringLiteral("low"),
+                        unique ? QStringLiteral("anonymous delegate; index changes when model order changes")
+                               : QStringLiteral("same source line and index exist in another view")));
+                node.insert(QStringLiteral("selectors"), selectors);
+            }
         }
     }
 
     QJsonArray annotatedChildren;
     const QJsonArray children = node.value(QStringLiteral("children")).toArray();
-    for (const QJsonValue &child : children)
-        annotatedChildren.append(applyDelegateContext(child.toObject(), delegateIndex, indexSource));
+    for (const QJsonValue &child : children) {
+        annotatedChildren.append(applyDelegateContext(child.toObject(), delegateIndex,
+                                                      indexSource, uniqueness));
+    }
     if (!children.isEmpty())
         node.insert(QStringLiteral("children"), annotatedChildren);
     return node;
 }
 
 static QJsonObject applyDelegateCellContext(QJsonObject node, int row, int column,
-                                            const QString &cellSource)
+                                            const QString &cellSource,
+                                            const SelectorUniquenessIndex &uniqueness)
 {
     QJsonObject delegate = node.value(QStringLiteral("delegate")).toObject();
     delegate.insert(QStringLiteral("isDelegate"), true);
@@ -671,40 +800,64 @@ static QJsonObject applyDelegateCellContext(QJsonObject node, int row, int colum
     const QString stableId = stableIdForDelegateSelector(node);
     if (!stableIdKind.isEmpty() && row >= 0 && column >= 0
             && delegateCellSourceSupportsSelector(cellSource)) {
+        const QString selectorText = QStringLiteral("%1=\"%2\" row=%3 column=%4")
+                .arg(stableIdKind, stableId).arg(row).arg(column);
         QJsonArray selectors = node.value(QStringLiteral("selectors")).toArray();
-        selectors.append(selector(
-                QStringLiteral("%1+row+column").arg(stableIdKind),
-                QStringLiteral("%1=\"%2\" row=%3 column=%4").arg(stableIdKind, stableId)
-                        .arg(row).arg(column),
-                QStringLiteral("medium"),
-                QStringLiteral("row/column changes when model layout changes")));
+        if (selectorsContainValue(selectors, selectorText)) {
+            // Already annotated by an enclosing application of this context.
+        } else if (delegateCompositeIsUnique(uniqueness, selectorText)) {
+            selectors.append(selector(
+                    QStringLiteral("%1+row+column").arg(stableIdKind), selectorText,
+                    QStringLiteral("medium"),
+                    QStringLiteral("row/column changes when model layout changes")));
+        } else {
+            selectors.append(selector(
+                    QStringLiteral("%1+row+column").arg(stableIdKind), selectorText,
+                    QStringLiteral("low"),
+                    QStringLiteral("same id and cell exist in another view; use the sourceLocation composite")));
+            const QString sourceValue = nodeSourceSelectorValue(node);
+            const QString sourceText = QStringLiteral("sourceLocation=\"%1\" row=%2 column=%3")
+                    .arg(sourceValue).arg(row).arg(column);
+            if (!sourceValue.isEmpty() && delegateCompositeIsUnique(uniqueness, sourceText)) {
+                selectors.append(selector(
+                        QStringLiteral("sourceLocation+row+column"), sourceText,
+                        QStringLiteral("medium"),
+                        QStringLiteral("row/column changes when model layout changes")));
+            }
+        }
         node.insert(QStringLiteral("selectors"), selectors);
     } else if (stableIdKind.isEmpty() && row >= 0 && column >= 0
                && delegateCellSourceSupportsSelector(cellSource)) {
         const QString sourceValue = delegateSourceSelectorValue(node);
         if (!sourceValue.isEmpty()) {
+            const QString sourceText = QStringLiteral("sourceLocation=\"%1\" row=%2 column=%3")
+                    .arg(sourceValue).arg(row).arg(column);
+            const bool unique = delegateCompositeIsUnique(uniqueness, sourceText);
             QJsonArray selectors = node.value(QStringLiteral("selectors")).toArray();
-            selectors.append(selector(
-                    QStringLiteral("sourceLocation+row+column"),
-                    QStringLiteral("sourceLocation=\"%1\" row=%2 column=%3")
-                            .arg(sourceValue).arg(row).arg(column),
-                    QStringLiteral("medium"),
-                    QStringLiteral("anonymous delegate; row/column changes when model layout changes")));
-            node.insert(QStringLiteral("selectors"), selectors);
+            if (!selectorsContainValue(selectors, sourceText)) {
+                selectors.append(selector(
+                        QStringLiteral("sourceLocation+row+column"), sourceText,
+                        unique ? QStringLiteral("medium") : QStringLiteral("low"),
+                        unique ? QStringLiteral("anonymous delegate; row/column changes when model layout changes")
+                               : QStringLiteral("same source line and cell exist in another view")));
+                node.insert(QStringLiteral("selectors"), selectors);
+            }
         }
     }
 
     QJsonArray annotatedChildren;
     const QJsonArray children = node.value(QStringLiteral("children")).toArray();
-    for (const QJsonValue &child : children)
+    for (const QJsonValue &child : children) {
         annotatedChildren.append(applyDelegateCellContext(child.toObject(), row, column,
-                                                         cellSource));
+                                                          cellSource, uniqueness));
+    }
     if (!children.isEmpty())
         node.insert(QStringLiteral("children"), annotatedChildren);
     return node;
 }
 
-static QJsonObject withDelegateMetadata(QJsonObject node, QObject *object, int delegateIndex)
+static QJsonObject withDelegateMetadata(QJsonObject node, QObject *object, int delegateIndex,
+                                        const SelectorUniquenessIndex &uniqueness)
 {
     QJsonObject source = node.value(QStringLiteral("sourceLocation")).toObject();
     if (source.isEmpty() && object)
@@ -714,19 +867,23 @@ static QJsonObject withDelegateMetadata(QJsonObject node, QObject *object, int d
 
     const int row = readableDelegateRow(object);
     const int column = readableDelegateColumn(object);
-    if (row >= 0 && column >= 0 && hasTableLikeViewAncestor(object))
-        return applyDelegateCellContext(node, row, column, QStringLiteral("delegateRowColumn"));
+    if (row >= 0 && column >= 0 && hasTableLikeViewAncestor(object)) {
+        return applyDelegateCellContext(node, row, column, QStringLiteral("delegateRowColumn"),
+                                        uniqueness);
+    }
 
     const int modelIndex = readableDelegateModelIndex(object);
     if (modelIndex >= 0)
-        return applyDelegateContext(node, modelIndex, QStringLiteral("modelIndex"));
+        return applyDelegateContext(node, modelIndex, QStringLiteral("modelIndex"), uniqueness);
 
     if (!sourceLooksLikeDelegate)
         return node;
 
-    if (!hasVirtualizedViewAncestor(object))
-        return applyDelegateContext(node, delegateIndex, QStringLiteral("creationOrder"));
-    return applyDelegateContext(node, delegateIndex, QStringLiteral("visualOrder"));
+    if (!hasVirtualizedViewAncestor(object)) {
+        return applyDelegateContext(node, delegateIndex, QStringLiteral("creationOrder"),
+                                    uniqueness);
+    }
+    return applyDelegateContext(node, delegateIndex, QStringLiteral("visualOrder"), uniqueness);
 }
 
 static QJsonArray collapseRepeatedChildren(const QJsonArray &children)
@@ -950,7 +1107,8 @@ static QJsonObject nodeForObjectInternal(QObject *object, int windowId, int dept
                 const QString repeatKey = repeatedNodeKey(childNode);
                 const int delegateIndex = delegateIndexes.value(repeatKey, 0);
                 delegateIndexes.insert(repeatKey, delegateIndex + 1);
-                childNode = withDelegateMetadata(childNode, child, delegateIndex);
+                childNode = withDelegateMetadata(childNode, child, delegateIndex,
+                                                 options.uniqueness);
                 children.append(childNode);
             }
         }
@@ -1383,12 +1541,15 @@ static void collectQueryMatchesFromObject(QObject *object, int windowId, const S
     if (inheritedDelegateRow >= 0 && inheritedDelegateColumn >= 0)
         matchNode = applyDelegateCellContext(matchNode, inheritedDelegateRow,
                                              inheritedDelegateColumn,
-                                             inheritedDelegateCellSource);
+                                             inheritedDelegateCellSource,
+                                             matchOptions.uniqueness);
     else if (inheritedDelegateIndex >= 0)
         matchNode = applyDelegateContext(matchNode, inheritedDelegateIndex,
-                                         inheritedDelegateIndexSource);
+                                         inheritedDelegateIndexSource,
+                                         matchOptions.uniqueness);
     else if (delegateIndex >= 0)
-        matchNode = withDelegateMetadata(matchNode, object, delegateIndex);
+        matchNode = withDelegateMetadata(matchNode, object, delegateIndex,
+                                         matchOptions.uniqueness);
     const QJsonObject effectiveDelegate = matchNode.value(QStringLiteral("delegate")).toObject();
     const int effectiveDelegateIndex =
             effectiveDelegate.value(QStringLiteral("index")).toInt(inheritedDelegateIndex);
@@ -1414,12 +1575,15 @@ static void collectQueryMatchesFromObject(QObject *object, int windowId, const S
             if (inheritedDelegateRow >= 0 && inheritedDelegateColumn >= 0)
                 resultNode = applyDelegateCellContext(resultNode, inheritedDelegateRow,
                                                       inheritedDelegateColumn,
-                                                      inheritedDelegateCellSource);
+                                                      inheritedDelegateCellSource,
+                                                      resultOptions.uniqueness);
             else if (inheritedDelegateIndex >= 0)
                 resultNode = applyDelegateContext(resultNode, inheritedDelegateIndex,
-                                                  inheritedDelegateIndexSource);
+                                                  inheritedDelegateIndexSource,
+                                                  resultOptions.uniqueness);
             else if (delegateIndex >= 0)
-                resultNode = withDelegateMetadata(resultNode, object, delegateIndex);
+                resultNode = withDelegateMetadata(resultNode, object, delegateIndex,
+                                                  resultOptions.uniqueness);
             matches->append(resultNode);
         }
     }
