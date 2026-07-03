@@ -18,6 +18,7 @@ public:
     static QJsonArray reasons(QObject *object);
     static QJsonArray reasonsAtPoint(QObject *object, const QPointF &scenePoint);
     static QJsonObject state(QObject *object);
+    static QJsonObject acceptsInputEvidence(QObject *object);
 };
 
 QT_END_NAMESPACE

@@ -1190,6 +1190,25 @@ void QmlAgentIntegrationTest::clickNodeDeliversSyntheticInput()
     QCOMPARE(matches.size(), 1);
     const int nodeId = matches.at(0).toObject().value(QStringLiteral("nodeId")).toInt(-1);
     QVERIFY(nodeId > 0);
+    // Input-affordance discovery (F-023): a MouseArea reads as accepting
+    // input; a plain Text does not.
+    const QJsonObject clickAreaAffordance = matches.at(0).toObject()
+            .value(QStringLiteral("acceptsInput")).toObject();
+    QCOMPARE(clickAreaAffordance.value(QStringLiteral("ok")).toBool(false), true);
+    QVERIFY2(clickAreaAffordance.value(QStringLiteral("via")).toArray()
+                     .contains(QStringLiteral("knownInputType")),
+             qPrintable(QString::fromUtf8(QJsonDocument(clickAreaAffordance)
+                                                  .toJson(QJsonDocument::Compact))));
+    const auto textAffordanceResponse = invoke(&client, QStringLiteral("UI.query"), {
+        { QStringLiteral("selector"), QStringLiteral("text=\"Press me\"") },
+        { QStringLiteral("includeSource"), false },
+    }, 74, &errorMessage);
+    QVERIFY2(textAffordanceResponse.has_value(), qPrintable(errorMessage));
+    QCOMPARE(textAffordanceResponse->value(QStringLiteral("result")).toObject()
+                     .value(QStringLiteral("matches")).toArray().at(0).toObject()
+                     .value(QStringLiteral("acceptsInput")).toObject()
+                     .value(QStringLiteral("ok")).toBool(true),
+             false);
 
     const auto clickResponse = invoke(&client, QStringLiteral("Input.clickNode"), {
         { QStringLiteral("nodeId"), nodeId },

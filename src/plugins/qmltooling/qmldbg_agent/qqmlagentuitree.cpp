@@ -989,6 +989,12 @@ static QJsonObject nodeForObjectInternal(QObject *object, int windowId, int dept
             if (options.fields.contains(QStringLiteral("interactable")))
                 node.insert(QStringLiteral("interactable"), interactable);
         }
+        // Input-affordance discovery: which nodes plausibly receive pointer
+        // input (accepted buttons, known input types, pointer handlers), so
+        // click targets are discoverable from the tree instead of guessed
+        // from type names (F-023). Cheap property reads, no blocker walk.
+        insertField(&node, options, QStringLiteral("acceptsInput"),
+                    QQmlAgentActionability::acceptsInputEvidence(object));
     }
 
     QJsonArray selectors;

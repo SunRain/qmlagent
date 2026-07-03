@@ -392,6 +392,37 @@ QJsonArray QQmlAgentActionability::reasonsAtPoint(QObject *object, const QPointF
     return reasonsForObject(object, &scenePoint);
 }
 
+QJsonObject QQmlAgentActionability::acceptsInputEvidence(QObject *object)
+{
+    // Whether this node plausibly receives pointer input, and why. The same
+    // evidence the blocker detection uses internally, exposed so agents and
+    // explorers can discover click targets from the tree instead of
+    // hardcoding type lists (F-023). Plausibility only: a MouseArea with no
+    // onClicked still reads as accepting input.
+    QQuickItem *item = qobject_cast<QQuickItem *>(object);
+    if (!item) {
+        return {
+            { QStringLiteral("ok"), false },
+            { QStringLiteral("via"), QJsonArray{} },
+        };
+    }
+
+    QJsonArray via;
+    if (hasAcceptedButtons(item))
+        via.append(QStringLiteral("acceptedButtons"));
+    if (isKnownInputItem(item))
+        via.append(QStringLiteral("knownInputType"));
+    if (hasPointerHandlerChild(item))
+        via.append(QStringLiteral("pointerHandler"));
+    return {
+        { QStringLiteral("ok"), !via.isEmpty() },
+        { QStringLiteral("via"), via },
+        { QStringLiteral("limitations"), QJsonArray{
+            QStringLiteral("plausibility from handlers/accepted buttons; does not prove a signal handler reacts"),
+        } },
+    };
+}
+
 QJsonObject QQmlAgentActionability::state(QObject *object)
 {
     const QJsonArray reasonArray = reasons(object);
