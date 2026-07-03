@@ -281,6 +281,7 @@ Actionability failure `reason` values (also embedded as `actionabilityReasons` /
 - **`nextHints`** are machine-followable follow-ups: `[{method, params?, reason, tool?, cli?}]` — protocol method plus optional MCP tool / `qmlagentctl` equivalents.
 - **Selector `stability`**: `high` (unique authored id/objectName, nodeId), `medium` (type, unique source location, indexed delegate selectors), `low` (text, visualPath, repeated source lines). `reason` explains downgrades.
 - **`settle`** objects: `{strategy:"frameSwappedOrTimeout", framesAfterAction, elapsedMs, timedOut, reason}` — a rendered frame after the action, not semantic proof.
+- **`acceptsInput`** (`{ok:true, via:["acceptedButtons"|"knownInputType"|"pointerHandler", ...]}`) marks nodes that plausibly receive pointer input — the same evidence the occlusion detector uses, exposed for click-target discovery. Sparse: absent means no input evidence, not unknown. Plausibility only: it does not prove a signal handler reacts to the input.
 - **Payload discipline**: 16 MiB caps both directions (§1). Screenshot bytes are omitted by default (`dataOmitted:true`); trees/queries offer `fields`, `properties`, `maxNodes`, `depth`, `collapseRepeated`, `verbosity:"summary"` projections; oversized responses come back as -32001 with hints instead of data.
 
 ## 7. GUI dispatch semantics

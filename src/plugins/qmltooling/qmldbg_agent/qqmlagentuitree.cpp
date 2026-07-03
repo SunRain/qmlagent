@@ -993,8 +993,11 @@ static QJsonObject nodeForObjectInternal(QObject *object, int windowId, int dept
         // input (accepted buttons, known input types, pointer handlers), so
         // click targets are discoverable from the tree instead of guessed
         // from type names (F-023). Cheap property reads, no blocker walk.
-        insertField(&node, options, QStringLiteral("acceptsInput"),
-                    QQmlAgentActionability::acceptsInputEvidence(object));
+        // Sparse: omitted entirely for non-accepting nodes.
+        const QJsonObject acceptsInput =
+                QQmlAgentActionability::acceptsInputEvidence(object);
+        if (!acceptsInput.isEmpty())
+            insertField(&node, options, QStringLiteral("acceptsInput"), acceptsInput);
     }
 
     QJsonArray selectors;

@@ -398,14 +398,13 @@ QJsonObject QQmlAgentActionability::acceptsInputEvidence(QObject *object)
     // evidence the blocker detection uses internally, exposed so agents and
     // explorers can discover click targets from the tree instead of
     // hardcoding type lists (F-023). Plausibility only: a MouseArea with no
-    // onClicked still reads as accepting input.
+    // onClicked still reads as accepting input — that caveat is documented
+    // once in the protocol reference, not repeated per node. Returns an
+    // empty object for non-accepting nodes so the field can be omitted
+    // instead of flooding every node with {ok:false}.
     QQuickItem *item = qobject_cast<QQuickItem *>(object);
-    if (!item) {
-        return {
-            { QStringLiteral("ok"), false },
-            { QStringLiteral("via"), QJsonArray{} },
-        };
-    }
+    if (!item)
+        return {};
 
     QJsonArray via;
     if (hasAcceptedButtons(item))
@@ -414,12 +413,11 @@ QJsonObject QQmlAgentActionability::acceptsInputEvidence(QObject *object)
         via.append(QStringLiteral("knownInputType"));
     if (hasPointerHandlerChild(item))
         via.append(QStringLiteral("pointerHandler"));
+    if (via.isEmpty())
+        return {};
     return {
-        { QStringLiteral("ok"), !via.isEmpty() },
+        { QStringLiteral("ok"), true },
         { QStringLiteral("via"), via },
-        { QStringLiteral("limitations"), QJsonArray{
-            QStringLiteral("plausibility from handlers/accepted buttons; does not prove a signal handler reacts"),
-        } },
     };
 }
 

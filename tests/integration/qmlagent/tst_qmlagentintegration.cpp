@@ -1204,11 +1204,11 @@ void QmlAgentIntegrationTest::clickNodeDeliversSyntheticInput()
         { QStringLiteral("includeSource"), false },
     }, 74, &errorMessage);
     QVERIFY2(textAffordanceResponse.has_value(), qPrintable(errorMessage));
-    QCOMPARE(textAffordanceResponse->value(QStringLiteral("result")).toObject()
+    // Sparse emission: non-accepting nodes omit the field instead of
+    // flooding every node with {ok:false}.
+    QVERIFY(!textAffordanceResponse->value(QStringLiteral("result")).toObject()
                      .value(QStringLiteral("matches")).toArray().at(0).toObject()
-                     .value(QStringLiteral("acceptsInput")).toObject()
-                     .value(QStringLiteral("ok")).toBool(true),
-             false);
+                     .contains(QStringLiteral("acceptsInput")));
 
     const auto clickResponse = invoke(&client, QStringLiteral("Input.clickNode"), {
         { QStringLiteral("nodeId"), nodeId },
