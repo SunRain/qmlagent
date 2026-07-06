@@ -31,13 +31,23 @@ compile definition; QmlAgent cannot attach until it is rebuilt with it.
 
 ## Launch Modes
 
+Choose by what you are changing, to avoid a needless rebuild-relaunch loop:
+
+- Iterating on QML only, and the file has no C++ the preview host can't
+  supply (no C++-registered types, context properties, C++ models, or
+  `loadFromModule` URI)? Use `preview` + `reload_preview` — it hot-reloads
+  without a rebuild.
+- Changing C++, or validating the shipped behavior before you trust a
+  result? Use `app`. Preview does NOT run the app's C++ backend, so a QML
+  file that depends on it will not load — the mode is faster, not equivalent.
+
 Use the real app path when validating an application executable:
 
 ```sh
 "$QT_BIN/qmlagent-launcher" app ./myapp -- --app-arg
 ```
 
-Use preview mode only for local QML-root iteration:
+Use preview mode for local QML-root iteration:
 
 ```sh
 "$QT_BIN/qmlagent-launcher" preview Main.qml
