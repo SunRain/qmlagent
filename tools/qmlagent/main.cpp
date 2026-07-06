@@ -1007,6 +1007,8 @@ static int runCtlSubcommand(const QStringList &arguments)
                 << "  qmlagentctl click <selector>\n"
                 << "  qmlagentctl scroll-into-view <selector>\n"
                 << "  qmlagentctl long-press <selector> [--hold-ms ms]\n"
+                << "  qmlagentctl drag <selector> --dx px [--dy px] [--steps n]\n"
+                << "  qmlagentctl wheel <selector> [--dx delta] [--dy delta]\n"
                 << "  qmlagentctl type <selector> --text value\n"
                 << "  qmlagentctl clear-text <selector>\n"
                 << "  qmlagentctl dismiss-popup [--all]\n"
@@ -1106,6 +1108,8 @@ static int runCtlSubcommand(const QStringList &arguments)
         QStringLiteral("click"),
         QStringLiteral("scroll-into-view"),
         QStringLiteral("long-press"),
+        QStringLiteral("drag"),
+        QStringLiteral("wheel"),
         QStringLiteral("type"),
         QStringLiteral("clear-text"),
         QStringLiteral("dismiss-popup"),
@@ -1229,6 +1233,56 @@ static int runCtlSubcommand(const QStringList &arguments)
                 { QStringLiteral("selector"), arguments.at(2) },
                 { QStringLiteral("holdMs"), holdMs },
             };
+        } else if (command == QLatin1String("drag")) {
+            if (arguments.size() < 3)
+                return fail(QStringLiteral("qmlagentctl drag requires a selector."));
+            if (!arguments.contains(QStringLiteral("--dx"))
+                    && !arguments.contains(QStringLiteral("--dy"))) {
+                return fail(QStringLiteral("qmlagentctl drag requires --dx and/or --dy "
+                                           "(pixels from the target center)."));
+            }
+            bool dxOk = true;
+            bool dyOk = true;
+            const double dx = argumentValue(arguments, QStringLiteral("--dx"),
+                                            QStringLiteral("0")).toDouble(&dxOk);
+            const double dy = argumentValue(arguments, QStringLiteral("--dy"),
+                                            QStringLiteral("0")).toDouble(&dyOk);
+            if (!dxOk || !dyOk)
+                return fail(QStringLiteral("--dx and --dy must be numbers."));
+            method = QStringLiteral("Input.dragNode");
+            params = {
+                { QStringLiteral("selector"), arguments.at(2) },
+                { QStringLiteral("delta"), QJsonArray{ dx, dy } },
+            };
+            if (arguments.contains(QStringLiteral("--steps"))) {
+                bool stepsOk = false;
+                const int steps = argumentValue(arguments, QStringLiteral("--steps")).toInt(&stepsOk);
+                if (!stepsOk || steps <= 0)
+                    return fail(QStringLiteral("--steps must be a positive integer."));
+                params.insert(QStringLiteral("steps"), steps);
+            }
+        } else if (command == QLatin1String("wheel")) {
+            if (arguments.size() < 3)
+                return fail(QStringLiteral("qmlagentctl wheel requires a selector."));
+            if (!arguments.contains(QStringLiteral("--dx"))
+                    && !arguments.contains(QStringLiteral("--dy"))) {
+                return fail(QStringLiteral("qmlagentctl wheel requires --dx and/or --dy "
+                                           "(wheel delta; negative --dy scrolls down)."));
+            }
+            bool dxOk = true;
+            bool dyOk = true;
+            const int dx = argumentValue(arguments, QStringLiteral("--dx"),
+                                         QStringLiteral("0")).toInt(&dxOk);
+            const int dy = argumentValue(arguments, QStringLiteral("--dy"),
+                                         QStringLiteral("0")).toInt(&dyOk);
+            if (!dxOk || !dyOk)
+                return fail(QStringLiteral("--dx and --dy must be integers."));
+            method = QStringLiteral("Input.wheel");
+            params = { { QStringLiteral("selector"), arguments.at(2) } };
+            if (arguments.contains(QStringLiteral("--dx")))
+                params.insert(QStringLiteral("deltaX"), dx);
+            if (arguments.contains(QStringLiteral("--dy")))
+                params.insert(QStringLiteral("deltaY"), dy);
         } else if (command == QLatin1String("type")) {
             if (arguments.size() < 3)
                 return fail(QStringLiteral("qmlagentctl type requires a selector."));

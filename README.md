@@ -249,6 +249,8 @@ Use `qmlagentctl` when MCP is unavailable or a shell command is simpler:
 "$QT_BIN/qmlagentctl" click 'id="saveButton"'
 "$QT_BIN/qmlagentctl" scroll-into-view 'id="saveButton"'
 "$QT_BIN/qmlagentctl" long-press 'id="contextButton"' --hold-ms 900
+"$QT_BIN/qmlagentctl" drag 'id="panelGrabber"' --dx -200 --steps 8
+"$QT_BIN/qmlagentctl" wheel 'id="listView"' --dy -240
 "$QT_BIN/qmlagentctl" clear-text 'id="urlField"'
 "$QT_BIN/qmlagentctl" type 'id="urlField"' --text 'https://qt.io'
 "$QT_BIN/qmlagentctl" dismiss-popup
