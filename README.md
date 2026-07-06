@@ -89,11 +89,15 @@ Codex CLI:
 codex mcp add qmlagent -- "$QT_BIN/qmlagent-mcp" --timeout 5000
 ```
 
-Claude Code, from the project directory:
+Claude Code, registered globally so it is available in every Qt project:
 
 ```
-claude mcp add qmlagent -s local -- "$QT_BIN/qmlagent-mcp" --timeout 5000
+claude mcp add qmlagent -s user -- "$QT_BIN/qmlagent-mcp" --timeout 5000
 ```
+
+The registration carries no project state — qmlagent-mcp discovers the live
+launcher session at call time — so one global registration serves all
+projects. Use `-s local` instead to scope it to the current project only.
 
 Do not put target ports, sockets, or app launch commands in MCP registration.
 
