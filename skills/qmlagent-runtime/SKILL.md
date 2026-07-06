@@ -11,13 +11,20 @@ their descriptions for exact parameters.
 
 ## Required Setup
 
-1. Find the Qt installation `bin/` that contains `qt-cmake`,
+1. Confirm the `qmlagent_*` MCP tools are actually available (e.g.
+   `qmlagent_target_status` is in your tool list). If they are missing, the
+   server is not registered in this project/session — do not silently fall
+   back to `qmlagentctl` and leave the user wondering why they see shell
+   commands. Tell them to register it and restart the session:
+   `claude mcp add qmlagent -s user -- <QT_BIN>/qmlagent-mcp --timeout 5000`
+   (`-s user` registers it globally; the tools appear after a restart). Until
+   then, `qmlagentctl` is the exact-equivalent fallback for every operation.
+2. Find the Qt installation `bin/` that contains `qt-cmake`,
    `qmlagent-launcher`, `qmlagentctl`, and `qmlagent-mcp`.
-2. Build the target with QML debugging enabled:
+3. Build the target with QML debugging enabled:
    `target_compile_definitions(myapp PRIVATE QT_QML_DEBUG)` in its CMake.
-3. Prefer `qmlagent-launcher` for all agent-owned sessions.
-4. After launch, call `qmlagent_target_status` first when native MCP tools are
-   available.
+4. Prefer `qmlagent-launcher` for all agent-owned sessions.
+5. After launch, call `qmlagent_target_status` first.
 
 If the app prints `Debugging has not been enabled`, the target lacks that
 compile definition; QmlAgent cannot attach until it is rebuilt with it.
@@ -176,6 +183,10 @@ supported.
 - Use `qmlagent_input_long_press` or `qmlagent_workflow_long_press_and_wait`
   for press-and-hold UI. Do not hand-roll mousePress + sleep + mouseRelease
   unless debugging the input primitive itself.
+- For application logs, use `qmlagent_log_get_entries` (raw `Log.getEntries`).
+  Never redirect the launcher's stdout/stderr to a file and grep it — the log
+  service is the interface; it gives structured, cursored, deduplicated
+  entries, and the launcher's own stream is not the app's log.
 - If QML fails to load, inspect logs/status first. A dead process cannot answer
   `UI.*` queries.
 - Keep one active workflow owner per target session; multiple agents can race
