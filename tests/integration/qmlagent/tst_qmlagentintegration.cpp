@@ -845,6 +845,43 @@ void QmlAgentIntegrationTest::clickNodeDeliversSyntheticInput()
              qPrintable(QStringLiteral("Expected drag command target x to increase: before=%1 after=%2")
                                 .arg(dragCommandBeforeX).arg(dragCommandAfterX)));
 
+    // F-024: a drag that travels past its small origin handle must not be
+    // refused. smoke.grabber is a 24px DragHandler-driven handle; dragging it
+    // ~70px leaves the handle, which the old path-wide actionability preflight
+    // rejected as not_draggable. The press point is actionable, so the drag
+    // must deliver and the DragHandler must activate and move it.
+    const auto grabberDragResponse = invoke(&client, QStringLiteral("Input.dragNode"), {
+        { QStringLiteral("selector"), QStringLiteral("id=\"smokeGrabber\"") },
+        { QStringLiteral("delta"), QJsonArray{ 70, 0 } },
+        { QStringLiteral("steps"), 10 },
+    }, 90, &errorMessage);
+    QVERIFY2(grabberDragResponse.has_value(), qPrintable(errorMessage));
+    QCOMPARE(grabberDragResponse->value(QStringLiteral("result")).toObject()
+                     .value(QStringLiteral("delivered")).toBool(false),
+             true);
+    const auto grabberStateResponse = invoke(&client, QStringLiteral("UI.query"), {
+        { QStringLiteral("selector"), QStringLiteral("id=\"root\"") },
+        { QStringLiteral("includeSource"), false },
+        { QStringLiteral("properties"), QJsonArray{ QStringLiteral("grabberDragActivated") } },
+    }, 91, &errorMessage);
+    QVERIFY2(grabberStateResponse.has_value(), qPrintable(errorMessage));
+    QCOMPARE(grabberStateResponse->value(QStringLiteral("result")).toObject()
+                     .value(QStringLiteral("matches")).toArray().at(0).toObject()
+                     .value(QStringLiteral("properties")).toObject()
+                     .value(QStringLiteral("grabberDragActivated")).toBool(false),
+             true);
+    const auto grabberAfterResponse = invoke(&client, QStringLiteral("UI.query"), {
+        { QStringLiteral("selector"), QStringLiteral("id=\"smokeGrabber\"") },
+        { QStringLiteral("includeSource"), false },
+        { QStringLiteral("properties"), QJsonArray{ QStringLiteral("x") } },
+    }, 92, &errorMessage);
+    QVERIFY2(grabberAfterResponse.has_value(), qPrintable(errorMessage));
+    QVERIFY2(grabberAfterResponse->value(QStringLiteral("result")).toObject()
+                     .value(QStringLiteral("matches")).toArray().at(0).toObject()
+                     .value(QStringLiteral("properties")).toObject()
+                     .value(QStringLiteral("x")).toDouble() > 0.0,
+             "Expected the grabber to move along its DragHandler axis.");
+
     const auto touchBeginResponse = invoke(&client, QStringLiteral("Input.dispatchTouchEvent"), {
         { QStringLiteral("selector"), QStringLiteral("id=\"smokeTouchArea\"") },
         { QStringLiteral("type"), QStringLiteral("touchBegin") },

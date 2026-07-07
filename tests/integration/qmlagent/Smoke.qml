@@ -13,6 +13,7 @@ Window {
     property bool genericBlockedClicked: false
     property bool labelledControlClicked: false
     property bool slowHandlerRan: false
+    property bool grabberDragActivated: false
     property bool longPressed: false
     property bool secondaryWindowClicked: false
     property int bindingBase: 70
@@ -516,6 +517,52 @@ Window {
             drag.axis: Drag.XAxis
             drag.minimumX: 170
             drag.maximumX: 270
+        }
+    }
+
+    // A small DragHandler-driven grabber whose drag lane crosses an
+    // interactive obstacle. Dragging the 24px grabber rightward travels over
+    // smoke.dragObstacle, which the old path-wide actionability preflight
+    // rejected as blocked_by_item (F-024). The press point is on the grabber
+    // and clear, so the drag must deliver and the DragHandler must move it.
+    Rectangle {
+        id: smokeDragTrack
+        objectName: "smoke.dragTrack"
+        x: 90
+        y: 130
+        width: 112
+        height: 26
+        color: "#d0d7de"
+
+        Rectangle {
+            id: smokeDragObstacle
+            objectName: "smoke.dragObstacleRect"
+            x: 40
+            width: 72
+            height: 26
+            color: "#ffd8a8"
+            MouseArea {
+                objectName: "smoke.dragObstacle"
+                anchors.fill: parent
+            }
+        }
+
+        Rectangle {
+            id: smokeGrabber
+            objectName: "smoke.grabber"
+            z: 1
+            width: 24
+            height: 26
+            color: smokeGrabberHandler.active ? "#1a7f37" : "#8250df"
+
+            DragHandler {
+                id: smokeGrabberHandler
+                xAxis.enabled: true
+                xAxis.minimum: 0
+                xAxis.maximum: smokeDragTrack.width - smokeGrabber.width
+                yAxis.enabled: false
+                onActiveChanged: if (active) root.grabberDragActivated = true
+            }
         }
     }
 

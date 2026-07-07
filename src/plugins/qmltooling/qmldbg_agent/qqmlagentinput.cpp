@@ -1105,10 +1105,17 @@ QJsonObject QQmlAgentInput::dragNode(const QJsonObject &params)
                                { QStringLiteral("point=[%1,%2]").arg(windowPoint.x()).arg(windowPoint.y()),
                                  QStringLiteral("viewport=[0,0,%1,%2]").arg(viewport.width()).arg(viewport.height()) });
         }
-        const QJsonArray actionabilityReasons =
-                QQmlAgentActionability::reasonsAtPoint(object, windowPoint);
-        if (!actionabilityReasons.isEmpty())
-            return inputFailureFromActionability(actionabilityReasons, nodeId, dragFailure);
+        // Gate actionability on the press point only. Once pressed, a
+        // DragHandler or MouseArea keeps the pointer grab, so the path
+        // legitimately crosses other items — checking every point rejected
+        // valid drags that start on a small handle (grabbers, slider thumbs,
+        // splitters) and travel past it.
+        if (i == 0) {
+            const QJsonArray actionabilityReasons =
+                    QQmlAgentActionability::reasonsAtPoint(object, windowPoint);
+            if (!actionabilityReasons.isEmpty())
+                return inputFailureFromActionability(actionabilityReasons, nodeId, dragFailure);
+        }
         itemPoints.append(pointArray(itemPoint));
         windowPoints.append(pointArray(windowPoint));
         path.append(windowPoint);
