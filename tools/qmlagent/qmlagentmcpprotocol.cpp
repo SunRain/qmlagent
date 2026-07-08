@@ -301,7 +301,7 @@ QJsonArray toolList()
              QStringLiteral("Focus one QQuickItem by selector or nodeId for keyboard input."),
              schema(withNodeRef({}))),
         tool(QStringLiteral("qmlagent_input_mouse"),
-             QStringLiteral("Dispatch one bounded mouse press/move/release event at a selector/node item point through Qt synthetic input. Use press/move/release sequences for drag verification."),
+             QStringLiteral("Dispatch one low-level mouse press/move/release event at a selector/node item point through Qt synthetic input, for a single event you cannot express with the higher-level tools. Do NOT hand-roll a drag from press/move/release here: a manual mouse sequence does not drive Qt gesture handlers (DragHandler stays inactive). Use qmlagent_input_drag for drags, which activates them correctly."),
              schema(withNodeRef({
                  { QStringLiteral("type"), QJsonObject{
                      { QStringLiteral("type"), QStringLiteral("string") },
