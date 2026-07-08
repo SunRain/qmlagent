@@ -41,6 +41,12 @@ Choose by what you are changing, to avoid a needless rebuild-relaunch loop:
   result? Use `app`. Preview does NOT run the app's C++ backend, so a QML
   file that depends on it will not load — the mode is faster, not equivalent.
 
+Preview loads the QML file standalone, so types registered through the app's
+`qt_add_qml_module` are not visible — most commonly a `pragma Singleton`
+(e.g. a `Theme`). The engine does pick up a `qmldir` next to the file, so add
+one (`singleton Theme 1.0 Theme.qml`) to preview such a file, or use `app`
+mode where the module resolves normally.
+
 Use the real app path when validating an application executable:
 
 ```sh
