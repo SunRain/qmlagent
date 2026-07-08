@@ -94,6 +94,14 @@ tools route through it automatically. Do not call `qmlagent_connect_tcp` or
 Direct attach is only for manually launched targets or streamed subscriptions
 that require a persistent attached client.
 
+When more than one launcher session may be live — most often your app running
+alongside an integration-test target — automatic routing refuses and names the
+live sessions. Pin yours by passing its id (from `qmlagent_target_status`) as
+the `session` argument on every target-backed tool. Pinning also protects you
+if your target exits mid-task: a pinned call fails cleanly instead of silently
+routing to a surviving session and returning another app's scene as if it were
+yours.
+
 Normal order:
 
 ```txt

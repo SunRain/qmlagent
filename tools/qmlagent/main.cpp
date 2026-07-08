@@ -797,7 +797,8 @@ static bool resolveLauncherSession(int timeoutMs, LauncherSession *selected, QSt
     }
     if (reachable.size() > 1) {
         *error = QStringLiteral("Multiple live qmlagent-launcher sessions found. "
-                                "Pin one with --session <id>. Sessions: %1")
+                                "Pin one by its launcherSession id (qmlagentctl --session <id>, "
+                                "or the MCP tools' session argument). Sessions: %1")
                          .arg(QString::fromUtf8(QJsonDocument(launcherSessionSummaries(reachable))
                                                     .toJson(QJsonDocument::Compact)));
         return false;
@@ -1636,6 +1637,7 @@ private:
         QString key;
         QString verbosity;
         QString outPath;
+        QString wantedSession;
         Expectation expectation;
     };
 
@@ -2162,6 +2164,8 @@ private:
     {
         call->mcpId = requestId;
         call->verbosity = arguments.value(QStringLiteral("verbosity")).toString(QStringLiteral("full"));
+        // Session pin applies to every launcher-routed call, workflows included.
+        call->wantedSession = arguments.value(QStringLiteral("session")).toString();
         if (mapWorkflowCall(name, arguments, call, error))
             return error->isEmpty();
 
@@ -2296,7 +2300,8 @@ private:
             LauncherSession launcher;
             QString launcherError;
             if (!resolveLauncherSession(arguments.value(QStringLiteral("timeoutMs")).toInt(m_timeoutMs),
-                                        &launcher, &launcherError)) {
+                                        &launcher, &launcherError,
+                                        arguments.value(QStringLiteral("session")).toString())) {
                 writeMessage(jsonResponse(requestId, toolErrorResult(launcherError)));
                 return true;
             }
@@ -2710,7 +2715,7 @@ private:
 
         LauncherSession launcher;
         QString launcherError;
-        if (!resolveLauncherSession(m_timeoutMs, &launcher, &launcherError)) {
+        if (!resolveLauncherSession(m_timeoutMs, &launcher, &launcherError, call.wantedSession)) {
             writeMessage(jsonResponse(requestId, toolErrorResult(
                     QStringLiteral("%1\n\nLauncher gateway status: %2")
                             .arg(notConnectedMessage(), launcherError))));

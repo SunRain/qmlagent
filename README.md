@@ -261,7 +261,11 @@ Use `qmlagentctl` when MCP is unavailable or a shell command is simpler:
 ```
 
 With multiple live launcher sessions, pin commands to one with
-`--session <id>`; `qmlagentctl sessions` lists ids.
+`--session <id>`; `qmlagentctl sessions` lists ids. MCP tools take the same
+pin as a `session` argument (ids come from `qmlagent_target_status`). Pin
+whenever another session may be live — e.g. an integration-test target
+alongside your app — so that if your target exits the call fails instead of
+silently rerouting to the surviving session.
 
 Raw protocol escape hatch:
 

@@ -96,7 +96,7 @@ QJsonArray toolList()
         { QStringLiteral("items"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("string") } } },
     };
 
-    return {
+    QJsonArray tools{
         tool(QStringLiteral("qmlagent_connect_tcp"),
              QStringLiteral("Attach directly over TCP to an app launched manually with -qmljsdebugger=port:<port>,host:<host>,services:QmlAgent; pass the exact port from that command. Not needed for qmlagent-launcher sessions — those auto-route. Use only for manual targets or streamed subscriptions (qmlagent_ui_subscribe, qmlagent_log_enable). Verify with qmlagent_target_status."),
              schema({
@@ -542,6 +542,35 @@ QJsonArray toolList()
              QStringLiteral("Resolve one node back to source with method/confidence/limitations."),
              schema(withNodeRef({}))),
     };
+
+    // Every launcher-routed tool accepts an optional session pin so an agent
+    // running alongside other live sessions (e.g. a test target) can address
+    // its own, and a dying target cannot silently reroute the call to another
+    // app. The direct-attach connect tools carry their own endpoint instead.
+    const QJsonObject sessionProperty{
+        { QStringLiteral("type"), QStringLiteral("string") },
+        { QStringLiteral("description"),
+          QStringLiteral("Optional launcher session id to pin this call to (an id prefix is "
+                         "enough; list live sessions and their ids with qmlagent_target_status). "
+                         "Without it, routing needs exactly one live launcher session and reports "
+                         "the choices when several are live.") },
+    };
+    const QSet<QString> directAttachTools{
+        QStringLiteral("qmlagent_connect_tcp"),
+        QStringLiteral("qmlagent_connect_local_socket"),
+    };
+    for (QJsonValueRef toolValue : tools) {
+        QJsonObject toolObject = toolValue.toObject();
+        if (directAttachTools.contains(toolObject.value(QStringLiteral("name")).toString()))
+            continue;
+        QJsonObject inputSchema = toolObject.value(QStringLiteral("inputSchema")).toObject();
+        QJsonObject properties = inputSchema.value(QStringLiteral("properties")).toObject();
+        properties.insert(QStringLiteral("session"), sessionProperty);
+        inputSchema.insert(QStringLiteral("properties"), properties);
+        toolObject.insert(QStringLiteral("inputSchema"), inputSchema);
+        toolValue = toolObject;
+    }
+    return tools;
 }
 
 QJsonObject jsonResponse(const QJsonValue &id, const QJsonValue &result)
