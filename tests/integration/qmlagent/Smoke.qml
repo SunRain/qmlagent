@@ -14,6 +14,7 @@ Window {
     property bool labelledControlClicked: false
     property bool slowHandlerRan: false
     property bool grabberDragActivated: false
+    property bool movingButtonClicked: false
     property bool longPressed: false
     property bool secondaryWindowClicked: false
     property int bindingBase: 70
@@ -563,6 +564,25 @@ Window {
                 yAxis.enabled: false
                 onActiveChanged: if (active) root.grabberDragActivated = true
             }
+        }
+    }
+
+    // A button that jumps out from under the click point when clicked. The
+    // post-dispatch recheck must not report the now-vacated point as
+    // blocked_by_item; it must flag targetMovedSinceDispatch and recheck the
+    // target where it actually is. (F-025)
+    Rectangle {
+        id: smokeMovingButton
+        objectName: root.movingButtonClicked ? "smoke.movingButtonClicked"
+                                             : "smoke.movingButton"
+        x: root.movingButtonClicked ? 250 : 90
+        y: 158
+        width: 40
+        height: 18
+        color: "#0969da"
+        MouseArea {
+            anchors.fill: parent
+            onClicked: root.movingButtonClicked = true
         }
     }
 

@@ -882,6 +882,25 @@ void QmlAgentIntegrationTest::clickNodeDeliversSyntheticInput()
                      .value(QStringLiteral("x")).toDouble() > 0.0,
              "Expected the grabber to move along its DragHandler axis.");
 
+    // F-025: clicking smoke.movingButton jumps it out from under the click
+    // point. Post-dispatch must flag targetMovedSinceDispatch and recheck the
+    // target where it now is (actionable), not report the vacated point as
+    // blocked_by_item.
+    const auto movingClickResponse = invoke(&client, QStringLiteral("Input.clickNode"), {
+        { QStringLiteral("selector"), QStringLiteral("objectName=\"smoke.movingButton\"") },
+    }, 93, &errorMessage);
+    QVERIFY2(movingClickResponse.has_value(), qPrintable(errorMessage));
+    const QJsonObject movingClickResult =
+            movingClickResponse->value(QStringLiteral("result")).toObject();
+    QCOMPARE(movingClickResult.value(QStringLiteral("delivered")).toBool(false), true);
+    const QJsonObject movingPostDispatch =
+            movingClickResult.value(QStringLiteral("postDispatch")).toObject();
+    QCOMPARE(movingPostDispatch.value(QStringLiteral("targetMovedSinceDispatch")).toBool(false),
+             true);
+    QVERIFY2(movingPostDispatch.value(QStringLiteral("actionable")).toBool(false),
+             qPrintable(QString::fromUtf8(QJsonDocument(movingPostDispatch)
+                                                  .toJson(QJsonDocument::Compact))));
+
     const auto touchBeginResponse = invoke(&client, QStringLiteral("Input.dispatchTouchEvent"), {
         { QStringLiteral("selector"), QStringLiteral("id=\"smokeTouchArea\"") },
         { QStringLiteral("type"), QStringLiteral("touchBegin") },

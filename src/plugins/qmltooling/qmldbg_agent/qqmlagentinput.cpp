@@ -263,11 +263,21 @@ static QJsonObject postDispatchTargetState(int nodeId, const QPointF *windowPoin
 
     state.insert(QStringLiteral("actionabilityRechecked"), true);
     state.insert(QStringLiteral("deliveryWindow"), deliveryWindowEvidence(postItem));
-    const QJsonArray reasons = windowPoint
+    // If a successful input changed the layout, the target may have moved out
+    // from under the dispatch point. Rechecking actionability AT that stale
+    // point reports whatever item now sits there as a blocker, which misreads
+    // a successful action as "blocked_by_item". Detect the move and recheck at
+    // the target's current position instead. (F-025)
+    const bool pointStale = windowPoint && postItem
+            && !itemBoxInWindow(postItem).contains(*windowPoint);
+    if (windowPoint) {
+        state.insert(QStringLiteral("point"), QJsonArray{ windowPoint->x(), windowPoint->y() });
+        if (pointStale)
+            state.insert(QStringLiteral("targetMovedSinceDispatch"), true);
+    }
+    const QJsonArray reasons = (windowPoint && !pointStale)
             ? QQmlAgentActionability::reasonsAtPoint(postObject, *windowPoint)
             : QQmlAgentActionability::reasons(postObject);
-    if (windowPoint)
-        state.insert(QStringLiteral("point"), QJsonArray{ windowPoint->x(), windowPoint->y() });
     state.insert(QStringLiteral("actionabilityReasons"), reasons);
     state.insert(QStringLiteral("actionable"), reasons.isEmpty());
     return state;
