@@ -515,15 +515,19 @@ QJsonArray toolList()
                  { QStringLiteral("maxEntries"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("integer") } } },
              })),
         tool(QStringLiteral("qmlagent_render_capture_screenshot"),
-             QStringLiteral("Fallback visual evidence: capture a QQuickWindow screenshot. Do not use this as the primary oracle. First use qmlagent_ui_query/ui_get_tree, diagnostics, logs, source, and input/workflow tools; request screenshot data only when structured evidence is insufficient or the task is explicitly visual. By default this returns metadata without PNG data. Set includeData:true only when image bytes are needed, and prefer scale/region to avoid large base64 payloads."),
+             QStringLiteral("Fallback visual evidence: capture a QQuickWindow screenshot. Do not use this as the primary oracle. First use qmlagent_ui_query/ui_get_tree, diagnostics, logs, source, and input/workflow tools; request screenshot data only when structured evidence is insufficient or the task is explicitly visual. By default this returns metadata without PNG data. When you need the actual image, pass outPath to write the PNG to a file (bytes are stripped from the result, so your context stays clean); use includeData:true only if you truly need base64 inline, and prefer scale/region either way."),
              schema({
                  { QStringLiteral("windowId"), QJsonObject{
                      { QStringLiteral("type"), QStringLiteral("integer") },
                      { QStringLiteral("description"), QStringLiteral("1-based QQuickWindow id. Defaults to the first QQuickWindow.") },
                  } },
+                 { QStringLiteral("outPath"), QJsonObject{
+                     { QStringLiteral("type"), QStringLiteral("string") },
+                     { QStringLiteral("description"), QStringLiteral("Write the PNG to this file path and return writtenTo/bytesWritten instead of base64. The preferred way to get the image without spending context on it.") },
+                 } },
                  { QStringLiteral("includeData"), QJsonObject{
                      { QStringLiteral("type"), QStringLiteral("boolean") },
-                     { QStringLiteral("description"), QStringLiteral("When true, include base64 PNG data. Defaults to false to preserve agent context budget.") },
+                     { QStringLiteral("description"), QStringLiteral("When true, include base64 PNG data inline. Defaults to false to preserve agent context budget; prefer outPath.") },
                  } },
                  { QStringLiteral("scale"), QJsonObject{
                      { QStringLiteral("type"), QStringLiteral("number") },

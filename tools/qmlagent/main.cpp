@@ -1635,6 +1635,7 @@ private:
         int holdMs = 900;
         QString key;
         QString verbosity;
+        QString outPath;
         Expectation expectation;
     };
 
@@ -2138,8 +2139,11 @@ private:
                 targetParams->insert(QStringLiteral("scale"), arguments.value(QStringLiteral("scale")));
             if (arguments.contains(QStringLiteral("region")))
                 targetParams->insert(QStringLiteral("region"), arguments.value(QStringLiteral("region")));
+            // outPath needs the PNG bytes to write, but they are stripped from
+            // the tool result afterward so they never enter the agent context.
+            const bool toFile = !arguments.value(QStringLiteral("outPath")).toString().isEmpty();
             targetParams->insert(QStringLiteral("includeData"),
-                                 arguments.value(QStringLiteral("includeData")).toBool(false));
+                                 toFile || arguments.value(QStringLiteral("includeData")).toBool(false));
             return true;
         }
         if (name == QLatin1String("qmlagent_source_resolve")) {
@@ -2162,6 +2166,7 @@ private:
             return error->isEmpty();
 
         call->kind = PendingCall::Kind::TargetCommand;
+        call->outPath = arguments.value(QStringLiteral("outPath")).toString();
         const bool mapped = mapToolCall(name, arguments, &call->targetMethod, &call->targetParams,
                                         error);
         if (mapped
@@ -2630,6 +2635,52 @@ private:
         return false;
     }
 
+    // When a screenshot tool call carried outPath, write the PNG to that file
+    // and strip the base64 from the tool result so image bytes never flood the
+    // agent context (mirrors qmlagentctl screenshot --out for MCP).
+    static QJsonValue applyScreenshotOutPath(const QJsonValue &payload, const PendingCall &call)
+    {
+        if (call.outPath.isEmpty()
+                || call.targetMethod != QLatin1String("Render.captureScreenshot")
+                || !payload.isObject()) {
+            return payload;
+        }
+        QJsonObject screenshot = payload.toObject();
+        if (!screenshot.value(QStringLiteral("captured")).toBool(false))
+            return payload;
+
+        const QByteArray png = QByteArray::fromBase64(
+                screenshot.value(QStringLiteral("data")).toString().toLatin1());
+        const QFileInfo outputInfo(call.outPath);
+        QString writeError;
+        if (png.isEmpty()) {
+            writeError = QStringLiteral("screenshot response contained no PNG bytes to write");
+        } else {
+            const QDir outputDir = outputInfo.absoluteDir();
+            if (!outputDir.exists() && !QDir().mkpath(outputDir.absolutePath())) {
+                writeError = QStringLiteral("could not create directory %1")
+                                     .arg(outputDir.absolutePath());
+            } else {
+                QFile file(call.outPath);
+                if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)
+                        || file.write(png) != png.size()) {
+                    writeError = QStringLiteral("could not write %1: %2")
+                                         .arg(call.outPath, file.errorString());
+                }
+            }
+        }
+
+        screenshot.remove(QStringLiteral("data"));
+        screenshot.insert(QStringLiteral("dataOmitted"), true);
+        if (writeError.isEmpty()) {
+            screenshot.insert(QStringLiteral("writtenTo"), outputInfo.absoluteFilePath());
+            screenshot.insert(QStringLiteral("bytesWritten"), png.size());
+        } else {
+            screenshot.insert(QStringLiteral("outPathError"), writeError);
+        }
+        return screenshot;
+    }
+
     void writeLauncherTargetResponse(const QJsonValue &requestId, const PendingCall &call,
                                      const QJsonObject &targetResponse)
     {
@@ -2644,6 +2695,8 @@ private:
                 && call.targetMethod == QLatin1String("UI.queryMany")) {
             payload = summarizedQueryManyResult(payload.toObject());
         }
+        if (!isError)
+            payload = applyScreenshotOutPath(payload, call);
         writeMessage(jsonResponse(requestId, toolResult(payload, isError)));
     }
 
@@ -3110,6 +3163,8 @@ private:
                 && m_currentCall->targetMethod == QLatin1String("UI.queryMany")) {
             payload = summarizedQueryManyResult(payload.toObject());
         }
+        if (!isError)
+            payload = applyScreenshotOutPath(payload, *m_currentCall);
         writeMessage(jsonResponse(m_currentCall->mcpId, toolResult(payload, isError)));
         m_currentCall.reset();
         dispatchNextTargetCommand();
