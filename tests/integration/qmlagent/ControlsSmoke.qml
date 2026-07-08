@@ -606,7 +606,14 @@ Window {
         text: "ToolTip"
         delay: 0
         timeout: 60000
-        visible: controlsToolTipButton.hovered
+        // Latch once shown: a host mouse cursor drifting over the offscreen
+        // test window can flip controlsToolTipButton.hovered false between the
+        // synthetic hover and the waitFor, hiding the tooltip mid-assertion.
+        // The hover still triggers it; the latch just prevents a stray host
+        // un-hover from racing the check.
+        property bool everShown: false
+        visible: controlsToolTipButton.hovered || everShown
+        onVisibleChanged: if (visible) everShown = true
 
         contentItem: Label {
             id: controlsToolTipLabel
