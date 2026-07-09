@@ -47,7 +47,7 @@ Window {
                 property int comboCount: root.comboActivated
                 property int comboIndex: controlsComboBox.currentIndex
                 property string comboText: controlsComboBox.currentText
-                property bool toolTipHovered: controlsToolTipButton.hovered
+                property bool toolTipHovered: controlsToolTipButton.everHovered
                 property real rangeFirstValue: controlsRangeSlider.first.value
                 property real rangeSecondValue: controlsRangeSlider.second.value
                 property real dialValue: controlsDial.value
@@ -534,6 +534,12 @@ Window {
                 text: "ToolTip"
                 hoverEnabled: true
                 Layout.preferredWidth: 120
+                // Latch once hovered: a host mouse cursor drifting over the
+                // offscreen test window can flip hovered false between the
+                // synthetic hover and the read, so track "ever hovered" for the
+                // assertion instead of the live state (same race as everShown).
+                property bool everHovered: false
+                onHoveredChanged: if (hovered) everHovered = true
             }
         }
     }
