@@ -279,6 +279,12 @@ public:
         deleteLoadedRoots();
         m_warnings = {};
         m_engine.clearComponentCache();
+        // clearComponentCache() does not drop singleton instances, so an
+        // edited `pragma Singleton` (a Theme, say) would keep serving its old
+        // instance across reload. The roots are already deleted above, so no
+        // live QML references the singletons and clearing them here is safe;
+        // the next load re-instantiates them from the edited source.
+        m_engine.clearSingletons();
         m_engine.load(QUrl::fromLocalFile(qmlFile));
 
         m_loadedRoots.clear();
