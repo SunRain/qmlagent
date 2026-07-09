@@ -260,6 +260,11 @@ QJsonArray toolList()
         tool(QStringLiteral("qmlagent_input_click"),
              QStringLiteral("Click one node through Qt synthetic input. A delivered click returns ok:true for input delivery only; settle.timedOut means no frame was observed before the settle timeout and is not semantic proof of failure. For transitions, Drawer/Menu/Popup/Dialog open-close, loaders, or async state, prefer qmlagent_workflow_click_and_wait; if that tool is not visible in lazy native-tool discovery, call qmlagent_input_click then qmlagent_ui_wait_for."),
              schema(withNodeRef({
+                 { QStringLiteral("point"), QJsonObject{
+                     { QStringLiteral("type"), QStringLiteral("array") },
+                     { QStringLiteral("items"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("number") } } },
+                     { QStringLiteral("description"), QStringLiteral("Optional item-local [x,y] to click instead of the node center. Use for a wide hit area or when the center is occluded but an offset is clear. Actionability is checked at this point.") },
+                 } },
                  { QStringLiteral("settle"), QJsonObject{
                      { QStringLiteral("type"), QStringLiteral("object") },
                      { QStringLiteral("description"), QStringLiteral("Optional settle tuning such as timeoutMs. This affects frame-settle evidence only, not semantic verification.") },

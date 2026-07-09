@@ -118,6 +118,7 @@ add_test(NAME qmlagent_integration_client
         referenceClientMcpRoutesThroughLauncher
         referenceClientPreviewReloadRefreshesSingleton
         referenceClientClicksOutOfBoundsUnclippedChild
+        referenceClientClicksItemLocalPoint
         referenceClientMcpWorkflowReports
         referenceClientReportsSingleClientConflict
         referenceClientMcpRefusesExistingLocalSocketPath

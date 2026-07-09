@@ -1216,6 +1216,19 @@ static int runCtlSubcommand(const QStringList &arguments)
                 return fail(QStringLiteral("qmlagentctl click requires a selector."));
             method = QStringLiteral("Input.clickNode");
             params = { { QStringLiteral("selector"), arguments.at(2) } };
+            if (arguments.contains(QStringLiteral("--px"))
+                    || arguments.contains(QStringLiteral("--py"))) {
+                bool pxOk = true;
+                bool pyOk = true;
+                const double px = argumentValue(arguments, QStringLiteral("--px"),
+                                                QStringLiteral("0")).toDouble(&pxOk);
+                const double py = argumentValue(arguments, QStringLiteral("--py"),
+                                                QStringLiteral("0")).toDouble(&pyOk);
+                if (!pxOk || !pyOk)
+                    return fail(QStringLiteral("--px and --py must be numbers "
+                                               "(item-local click point)."));
+                params.insert(QStringLiteral("point"), QJsonArray{ px, py });
+            }
         } else if (command == QLatin1String("scroll-into-view")) {
             if (arguments.size() < 3)
                 return fail(QStringLiteral("qmlagentctl scroll-into-view requires a selector."));
@@ -1927,6 +1940,8 @@ private:
         if (name == QLatin1String("qmlagent_input_click")) {
             *targetMethod = QStringLiteral("Input.clickNode");
             *targetParams = nodeRef(arguments, error);
+            if (arguments.contains(QStringLiteral("point")))
+                targetParams->insert(QStringLiteral("point"), arguments.value(QStringLiteral("point")));
             if (arguments.contains(QStringLiteral("settle")))
                 targetParams->insert(QStringLiteral("settle"), arguments.value(QStringLiteral("settle")));
             return error->isEmpty();

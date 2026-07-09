@@ -76,6 +76,7 @@ private slots:
     void referenceClientMcpRoutesThroughLauncher();
     void referenceClientPreviewReloadRefreshesSingleton();
     void referenceClientClicksOutOfBoundsUnclippedChild();
+    void referenceClientClicksItemLocalPoint();
     void referenceClientMcpWorkflowReports();
     void referenceClientReportsSingleClientConflict();
     void referenceClientMcpRefusesExistingLocalSocketPath();
@@ -4431,6 +4432,101 @@ Window {
     QCOMPARE(coveredResult.value(QStringLiteral("delivered")).toBool(true), false);
     QCOMPARE(coveredResult.value(QStringLiteral("reason")).toString(),
              QStringLiteral("blocked_by_item"));
+}
+
+void QmlAgentIntegrationTest::referenceClientClicksItemLocalPoint()
+{
+    const QString qmlagentMcp = qmlagentMcpExecutable();
+    QVERIFY2(!qmlagentMcp.isEmpty(), "Missing qmlagent-mcp test binary path.");
+
+    QTemporaryDir previewDir;
+    QVERIFY2(previewDir.isValid(), qPrintable(previewDir.errorString()));
+    const QString qmlFile = QDir(previewDir.path()).filePath(QStringLiteral("Main.qml"));
+    QFile file(qmlFile);
+    QVERIFY2(file.open(QIODevice::WriteOnly | QIODevice::Text), qPrintable(file.errorString()));
+    // A 300px-wide area recording where the click lands. Center -> ~150; an
+    // item-local point:[20,10] must land at ~20, not the center. (F-029)
+    file.write(R"(
+import QtQuick
+
+Window {
+    width: 400; height: 200; visible: true
+    Rectangle {
+        objectName: "wideArea"; x: 40; y: 60; width: 300; height: 60; color: "#cccccc"
+        property real lastX: -1
+        MouseArea {
+            objectName: "wideAreaMouse"; anchors.fill: parent
+            onClicked: (m) => parent.lastX = m.x
+        }
+    }
+}
+)");
+    file.close();
+
+    QString errorMessage;
+    SmokeAppRunner launcher;
+    QTemporaryDir launcherWorkingDir;
+    QVERIFY2(launcherWorkingDir.isValid(), qPrintable(launcherWorkingDir.errorString()));
+    QVERIFY2(launcher.startLauncherPreview(qmlFile, &errorMessage, launcherWorkingDir.path()),
+             qPrintable(errorMessage));
+
+    QProcess client;
+    client.setProcessChannelMode(QProcess::MergedChannels);
+    client.start(qmlagentMcp, { QStringLiteral("--timeout"), QString::number(RequestTimeoutMs) });
+    QVERIFY2(client.waitForStarted(), qPrintable(client.errorString()));
+
+    auto writeRequest = [&](const QJsonObject &request) {
+        client.write(compactObject(request));
+        client.write("\n");
+        QVERIFY2(client.waitForBytesWritten(RequestTimeoutMs), qPrintable(client.errorString()));
+    };
+    const QJsonObject lastXQuery{
+        { QStringLiteral("selector"), QStringLiteral("objectName=\"wideArea\"") },
+        { QStringLiteral("properties"), QJsonArray{ QStringLiteral("lastX") } },
+        { QStringLiteral("verbosity"), QStringLiteral("full") },
+    };
+    auto lastXOf = [](const QJsonObject &response) {
+        return response.value(QStringLiteral("result")).toObject()
+                .value(QStringLiteral("structuredContent")).toObject()
+                .value(QStringLiteral("matches")).toArray().at(0).toObject()
+                .value(QStringLiteral("properties")).toObject()
+                .value(QStringLiteral("lastX")).toDouble(-1);
+    };
+
+    writeRequest(mcpRequest(1, QStringLiteral("initialize")));
+    writeRequest(mcpToolCall(2, QStringLiteral("qmlagent_input_click"), {
+        { QStringLiteral("selector"), QStringLiteral("objectName=\"wideAreaMouse\"") },
+    }));
+    QByteArray output = waitForOutput(&client, QByteArrayLiteral("\"id\":2"));
+    writeRequest(mcpToolCall(3, QStringLiteral("qmlagent_ui_query"), lastXQuery));
+    output += waitForOutput(&client, QByteArrayLiteral("\"id\":3"));
+    writeRequest(mcpToolCall(4, QStringLiteral("qmlagent_input_click"), {
+        { QStringLiteral("selector"), QStringLiteral("objectName=\"wideAreaMouse\"") },
+        { QStringLiteral("point"), QJsonArray{ 20, 10 } },
+    }));
+    output += waitForOutput(&client, QByteArrayLiteral("\"id\":4"));
+    writeRequest(mcpToolCall(5, QStringLiteral("qmlagent_ui_query"), lastXQuery));
+    output += waitForOutput(&client, QByteArrayLiteral("\"id\":5"));
+    writeRequest(mcpRequest(6, QStringLiteral("shutdown")));
+    output += waitForOutput(&client, QByteArrayLiteral("\"id\":6"));
+    writeRequest({
+        { QStringLiteral("jsonrpc"), QStringLiteral("2.0") },
+        { QStringLiteral("method"), QStringLiteral("notifications/exit") },
+    });
+    if (!client.waitForFinished(ProcessShutdownTimeoutMs)) {
+        client.kill();
+        client.waitForFinished();
+    }
+
+    const QHash<int, QJsonObject> responses = parseMcpResponses(output);
+    QCOMPARE(responses.value(2).value(QStringLiteral("result")).toObject()
+                     .value(QStringLiteral("structuredContent")).toObject()
+                     .value(QStringLiteral("delivered")).toBool(), true);
+    QCOMPARE(lastXOf(responses.value(3)), 150.0);
+    QCOMPARE(responses.value(4).value(QStringLiteral("result")).toObject()
+                     .value(QStringLiteral("structuredContent")).toObject()
+                     .value(QStringLiteral("delivered")).toBool(), true);
+    QCOMPARE(lastXOf(responses.value(5)), 20.0);
 }
 
 void QmlAgentIntegrationTest::referenceClientMcpPersistentMode()

@@ -917,10 +917,6 @@ QJsonObject QQmlAgentInput::clickNode(const QJsonObject &params)
     QObject *object = ref.object;
     if (!object)
         return failure(QStringLiteral("node_not_found"), nodeId, { QStringLiteral("node_not_found") });
-    const QJsonArray actionabilityReasons = QQmlAgentActionability::reasons(object);
-    if (!actionabilityReasons.isEmpty())
-        return inputFailureFromActionability(actionabilityReasons, nodeId, failure);
-
     QQuickItem *item = qobject_cast<QQuickItem *>(object);
     if (!item)
         return failure(QStringLiteral("not_qquickitem"), nodeId, { QStringLiteral("not_qquickitem") });
@@ -929,29 +925,52 @@ QJsonObject QQmlAgentInput::clickNode(const QJsonObject &params)
     if (!window)
         return failure(QStringLiteral("unknown_window"), nodeId, { QStringLiteral("window=null") });
 
+    // An optional item-local `point` aims the click inside a wide hit area
+    // instead of the center; without it the center is used and behavior is
+    // unchanged. A custom point is gated on actionability AT that point, since
+    // the center's blocker state does not describe an offset.
     const QRectF bbox = itemBoxInWindow(item);
-    const QPointF center = bbox.center();
+    QPointF actionPoint = bbox.center();
+    QJsonArray actionabilityReasons;
+    if (hasPointParam(params, QStringLiteral("point"))) {
+        const QPointF itemPoint = pointFFromParams(params, QStringLiteral("point"));
+        const QPointF windowPoint = item->mapToScene(itemPoint);
+        const QRectF viewport(QPointF(0, 0), window->size());
+        if (!viewport.contains(windowPoint)) {
+            return failure(QStringLiteral("point_outside_viewport"), nodeId,
+                           { QStringLiteral("point=[%1,%2]").arg(windowPoint.x()).arg(windowPoint.y()),
+                             QStringLiteral("viewport=[0,0,%1,%2]")
+                                     .arg(viewport.width()).arg(viewport.height()) });
+        }
+        actionPoint = windowPoint;
+        actionabilityReasons = QQmlAgentActionability::reasonsAtPoint(object, windowPoint);
+    } else {
+        actionabilityReasons = QQmlAgentActionability::reasons(object);
+    }
+    if (!actionabilityReasons.isEmpty())
+        return inputFailureFromActionability(actionabilityReasons, nodeId, failure);
+
     const QJsonObject deliveryWindow = deliveryWindowEvidence(item);
     QPointer<QQuickWindow> guardedWindow(window);
     const QJsonObject settle = runInputAndSettle(window, params, [&](QElapsedTimer *elapsed) {
         if (!guardedWindow)
             return;
-        QQmlAgentInputDriver::mouse(guardedWindow.data(), center, QEvent::MouseButtonPress,
+        QQmlAgentInputDriver::mouse(guardedWindow.data(), actionPoint, QEvent::MouseButtonPress,
                                     Qt::LeftButton, Qt::LeftButton, Qt::NoModifier, elapsed);
         if (!guardedWindow)
             return;
-        QQmlAgentInputDriver::mouse(guardedWindow.data(), center, QEvent::MouseButtonRelease,
+        QQmlAgentInputDriver::mouse(guardedWindow.data(), actionPoint, QEvent::MouseButtonRelease,
                                     Qt::LeftButton, Qt::NoButton, Qt::NoModifier, elapsed);
     });
 
     return successfulInputResult({
         { QStringLiteral("delivered"), true },
         { QStringLiteral("node"), ref.node },
-        { QStringLiteral("point"), QJsonArray{ center.x(), center.y() } },
+        { QStringLiteral("point"), QJsonArray{ actionPoint.x(), actionPoint.y() } },
         { QStringLiteral("deliveryWindow"), deliveryWindow },
         { QStringLiteral("mode"), QQmlAgentInputDriver::mode() },
         { QStringLiteral("settle"), settle },
-        { QStringLiteral("postDispatch"), postDispatchTargetState(nodeId, &center) },
+        { QStringLiteral("postDispatch"), postDispatchTargetState(nodeId, &actionPoint) },
     });
 }
 
