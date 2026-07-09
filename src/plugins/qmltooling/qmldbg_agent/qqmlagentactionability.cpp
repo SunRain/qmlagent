@@ -159,19 +159,29 @@ static QQuickItem *topmostInputBlockerAt(QQuickItem *root, const QPointF &sceneP
     const QList<QQuickItem *> children = paintOrderChildren(root);
     for (auto it = children.crbegin(), end = children.crend(); it != end; ++it) {
         QQuickItem *child = *it;
-        if (!itemContainsScenePoint(child, scenePoint))
+        const bool childContainsPoint = itemContainsScenePoint(child, scenePoint);
+
+        // Qt delivers input into an unclipped child's subtree even when the
+        // point falls outside the child's own bounds, so only a clipping child
+        // that excludes the point may prune its subtree. Pruning every child
+        // that misses the point wrongly reported a lower in-bounds item as the
+        // blocker for a grabber that reaches past its parent. (F-028)
+        if (!childContainsPoint && child->clip())
             continue;
 
-        if (child == target || target->isAncestorOf(child))
+        if (childContainsPoint && (child == target || target->isAncestorOf(child)))
             return nullptr;
 
+        // The blocked point lies inside the target, so an ancestor of the
+        // target holds the definitive answer for this subtree even when the
+        // ancestor itself does not contain the point (unclipped, out of bounds).
         if (child->isAncestorOf(target))
             return topmostInputBlockerAt(child, scenePoint, target);
 
         if (QQuickItem *descendantBlocker = topmostInputBlockerAt(child, scenePoint, target))
             return descendantBlocker;
 
-        if (isPlausibleInputBlocker(child)) {
+        if (childContainsPoint && isPlausibleInputBlocker(child)) {
             // A mouse-accepting surface that fully encloses the target AND is
             // attached to a container that owns the target is the control's
             // own click area, not an occluder: Text under an anchors.fill

@@ -75,6 +75,7 @@ private slots:
     void referenceClientMcpPersistentMode();
     void referenceClientMcpRoutesThroughLauncher();
     void referenceClientPreviewReloadRefreshesSingleton();
+    void referenceClientClicksOutOfBoundsUnclippedChild();
     void referenceClientMcpWorkflowReports();
     void referenceClientReportsSingleClientConflict();
     void referenceClientMcpRefusesExistingLocalSocketPath();
@@ -2813,50 +2814,19 @@ void QmlAgentIntegrationTest::qtQuickControlsExposeAuthoredIds()
                                     .arg(QString::fromUtf8(QJsonDocument(issue)
                                                            .toJson(QJsonDocument::Compact)))));
     }
-    // Note: an earlier expectation of a controlsPage/SwipeView overlap was a
-    // native macOS style layout artifact; under the Basic style the pages lay
-    // out without overlapping, so only the authored SwipeDelegate overlap is
-    // asserted.
-    bool foundSwipeDelegateOverlap = false;
+    // This scene has no genuine layout overlap under the Basic style. An
+    // earlier controlsPage/SwipeView overlap was a native-macOS-style artifact,
+    // and the closed SwipeDelegate's center read as blocked_by_item only because
+    // the hit test pruned its out-of-bounds descendant subtree — a false
+    // positive the F-028 fix removes. Overlap promotion on real overlaps is
+    // covered by the diagnostics group and by
+    // referenceClientClicksOutOfBoundsUnclippedChild; here we only bound noise.
     int overlapIssueCount = 0;
     for (const QJsonValue &issueValue : issues) {
-        const QJsonObject issue = issueValue.toObject();
-        if (issue.value(QStringLiteral("id")).toString() != QLatin1String("layout.overlap"))
-            continue;
-        ++overlapIssueCount;
-        const QJsonObject target = issue.value(QStringLiteral("target")).toObject();
-        if (target.value(QStringLiteral("qmlId")).toString()
-                == QLatin1String("controlsSwipeDelegate")) {
-            foundSwipeDelegateOverlap = true;
-            const QJsonArray evidence = issue.value(QStringLiteral("evidence")).toArray();
-            bool foundDescendantEvidence = false;
-            bool foundBlockerEvidence = false;
-            for (const QJsonValue &evidenceValue : evidence) {
-                const QString text = evidenceValue.toString();
-                foundDescendantEvidence = foundDescendantEvidence
-                        || text.contains(QLatin1String("descendant outside authored ancestor bounds"));
-                // Which neighbor the swiped-open delegate overlaps depends on
-                // the Controls style's layout metrics; assert that blocker
-                // evidence is promoted, not which control it names.
-                foundBlockerEvidence = foundBlockerEvidence
-                        || text.contains(QLatin1String("blockingItem="));
-            }
-            QVERIFY2(foundDescendantEvidence && foundBlockerEvidence,
-                     qPrintable(QStringLiteral("Expected SwipeDelegate overlap to carry promoted descendant/blocker evidence: %1")
-                                        .arg(QString::fromUtf8(QJsonDocument(issue)
-                                                               .toJson(QJsonDocument::Compact)))));
-            const QJsonArray reasons = issue.value(QStringLiteral("actionability")).toObject()
-                    .value(QStringLiteral("reasons")).toArray();
-            QVERIFY2(hasReason(reasons, QStringLiteral("blocked_by_item")),
-                     qPrintable(QStringLiteral("Expected overlap issue to carry blocker actionability evidence: %1")
-                                        .arg(QString::fromUtf8(QJsonDocument(issue)
-                                                               .toJson(QJsonDocument::Compact)))));
-        }
+        if (issueValue.toObject().value(QStringLiteral("id")).toString()
+                == QLatin1String("layout.overlap"))
+            ++overlapIssueCount;
     }
-    QVERIFY2(foundSwipeDelegateOverlap,
-             qPrintable(QStringLiteral("Expected Diagnostics.analyzeTree to promote SwipeDelegate descendant overlap: %1")
-                                .arg(QString::fromUtf8(QJsonDocument(diagnosticsResult)
-                                                       .toJson(QJsonDocument::Compact)))));
     QVERIFY2(overlapIssueCount <= 3,
              qPrintable(QStringLiteral("Overlap diagnostics should stay bounded and app-actionable, got %1 issues: %2")
                                 .arg(overlapIssueCount)
@@ -4361,6 +4331,106 @@ Window {
     QCOMPARE(probeTagOf(responses.value(2)), 1);
     QCOMPARE(reload.value(QStringLiteral("ok")).toBool(), true);
     QCOMPARE(probeTagOf(responses.value(4)), 42);
+}
+
+void QmlAgentIntegrationTest::referenceClientClicksOutOfBoundsUnclippedChild()
+{
+    const QString qmlagentMcp = qmlagentMcpExecutable();
+    QVERIFY2(!qmlagentMcp.isEmpty(), "Missing qmlagent-mcp test binary path.");
+
+    QTemporaryDir previewDir;
+    QVERIFY2(previewDir.isValid(), qPrintable(previewDir.errorString()));
+    const QString qmlFile = QDir(previewDir.path()).filePath(QStringLiteral("Main.qml"));
+    QFile file(qmlFile);
+    QVERIFY2(file.open(QIODevice::WriteOnly | QIODevice::Text), qPrintable(file.errorString()));
+    // Two grabbers reaching 35px outside their (unclipped) panels. reachGrabber
+    // paints on top of a lower list -> Qt delivers there, so it must be
+    // clickable. coveredGrabber has a foreign overlay painted on top of it ->
+    // genuinely occluded, so it must still report blocked_by_item. (F-028)
+    file.write(R"(
+import QtQuick
+
+Window {
+    width: 400; height: 300; visible: true
+
+    Rectangle {
+        objectName: "lowerPanel"; x: 20; y: 40; width: 150; height: 120; color: "#cccccc"
+        ListView {
+            objectName: "lowerList"; anchors.fill: parent; model: 3
+            delegate: Rectangle { width: ListView.view.width; height: 20; color: "#dddddd" }
+        }
+    }
+    Rectangle {
+        objectName: "upperPanel"; x: 70; y: 40; width: 100; height: 120; color: "#a0aaccff"
+        Rectangle {
+            objectName: "reachGrabber"; x: -35; y: 40; width: 35; height: 30; color: "#ff8800"
+            MouseArea { objectName: "reachGrabberArea"; anchors.fill: parent }
+        }
+    }
+    Rectangle {
+        objectName: "upperPanel2"; x: 300; y: 40; width: 80; height: 120; color: "#a0ccaaff"
+        Rectangle {
+            objectName: "coveredGrabber"; x: -35; y: 40; width: 35; height: 30; color: "#ff8800"
+            MouseArea { objectName: "coveredGrabberArea"; anchors.fill: parent }
+        }
+    }
+    Rectangle {
+        objectName: "foreignOverlay"; x: 258; y: 75; width: 40; height: 40; color: "#3300ff00"
+        MouseArea { objectName: "foreignArea"; anchors.fill: parent }
+    }
+}
+)");
+    file.close();
+
+    QString errorMessage;
+    SmokeAppRunner launcher;
+    QTemporaryDir launcherWorkingDir;
+    QVERIFY2(launcherWorkingDir.isValid(), qPrintable(launcherWorkingDir.errorString()));
+    QVERIFY2(launcher.startLauncherPreview(qmlFile, &errorMessage, launcherWorkingDir.path()),
+             qPrintable(errorMessage));
+
+    QProcess client;
+    client.setProcessChannelMode(QProcess::MergedChannels);
+    client.start(qmlagentMcp, { QStringLiteral("--timeout"), QString::number(RequestTimeoutMs) });
+    QVERIFY2(client.waitForStarted(), qPrintable(client.errorString()));
+
+    auto writeRequest = [&](const QJsonObject &request) {
+        client.write(compactObject(request));
+        client.write("\n");
+        QVERIFY2(client.waitForBytesWritten(RequestTimeoutMs), qPrintable(client.errorString()));
+    };
+
+    writeRequest(mcpRequest(1, QStringLiteral("initialize")));
+    writeRequest(mcpToolCall(2, QStringLiteral("qmlagent_input_click"), {
+        { QStringLiteral("selector"), QStringLiteral("objectName=\"reachGrabberArea\"") },
+    }));
+    QByteArray output = waitForOutput(&client, QByteArrayLiteral("\"id\":2"));
+    writeRequest(mcpToolCall(3, QStringLiteral("qmlagent_input_click"), {
+        { QStringLiteral("selector"), QStringLiteral("objectName=\"coveredGrabberArea\"") },
+    }));
+    output += waitForOutput(&client, QByteArrayLiteral("\"id\":3"));
+    writeRequest(mcpRequest(4, QStringLiteral("shutdown")));
+    output += waitForOutput(&client, QByteArrayLiteral("\"id\":4"));
+    writeRequest({
+        { QStringLiteral("jsonrpc"), QStringLiteral("2.0") },
+        { QStringLiteral("method"), QStringLiteral("notifications/exit") },
+    });
+    if (!client.waitForFinished(ProcessShutdownTimeoutMs)) {
+        client.kill();
+        client.waitForFinished();
+    }
+
+    const QHash<int, QJsonObject> responses = parseMcpResponses(output);
+    const QJsonObject reachResult = responses.value(2).value(QStringLiteral("result")).toObject()
+            .value(QStringLiteral("structuredContent")).toObject();
+    QVERIFY2(reachResult.value(QStringLiteral("delivered")).toBool(),
+             qPrintable(QString::fromUtf8(QJsonDocument(reachResult).toJson(QJsonDocument::Compact))));
+
+    const QJsonObject coveredResult = responses.value(3).value(QStringLiteral("result")).toObject()
+            .value(QStringLiteral("structuredContent")).toObject();
+    QCOMPARE(coveredResult.value(QStringLiteral("delivered")).toBool(true), false);
+    QCOMPARE(coveredResult.value(QStringLiteral("reason")).toString(),
+             QStringLiteral("blocked_by_item"));
 }
 
 void QmlAgentIntegrationTest::referenceClientMcpPersistentMode()
