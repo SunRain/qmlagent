@@ -59,6 +59,11 @@ Use preview mode for local QML-root iteration:
 "$QT_BIN/qmlagent-launcher" preview Main.qml
 ```
 
+Prefer a `Window`-root file for preview: it opens at the size the file
+declares. An `Item`-root file gets a default 640x420 host window (there is no
+size knob), so a larger design is clipped — wrap it in a `Window` that sets
+`width`/`height`, which also keeps `reload_preview` targeting the same window.
+
 Preview sessions can reload. After editing the root QML file or a file it
 loads, request reload through native MCP:
 
@@ -119,6 +124,13 @@ verify with runtime evidence
 Use compact or summary output by default. Ask for fuller evidence only when the
 summary says fields were omitted or when patching needs deeper source/runtime
 facts.
+
+On an input result, `delivered:true` is the action-success signal. The nested
+`settle` object is render-loop-only (`verificationRole: render-loop-settle-only`):
+`settle.ok:false` with `frame_not_observed_before_timeout` just means the click
+produced no repaint — common for a state-only change — not that the input
+failed. Confirm the real outcome with `UI.query`/`UI.waitFor`, never by reading
+`settle.ok` as pass/fail.
 
 ## qmlagentctl Fallback
 

@@ -2319,7 +2319,12 @@ static WaitEvaluation evaluateWaitCondition(const WaitCondition &condition)
         evaluation.reason = QStringLiteral("property_not_found");
         evaluation.diagnostics.append(waitDiagnostic(
                 QStringLiteral("wait.property_not_found"),
-                QStringLiteral("The matched node does not expose the requested property.")));
+                QStringLiteral("The matched node does not expose property '%1'. Property chains "
+                               "through QObject properties do resolve (for example "
+                               "contentItem.width); but a path cannot address a child element by "
+                               "id or index — match that child with its own selector and wait on "
+                               "its property instead.")
+                        .arg(condition.property)));
         return evaluation;
     }
 
