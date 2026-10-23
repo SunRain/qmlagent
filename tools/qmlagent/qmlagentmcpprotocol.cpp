@@ -143,7 +143,7 @@ QJsonArray toolList()
              QStringLiteral("Stop the current qmlagent-launcher session discovered in the workspace. Use this to close a preview or application session without manual process killing."),
              schema({})),
         tool(QStringLiteral("qmlagent_ui_get_tree"),
-             QStringLiteral("Get a projected Qt Quick UI tree. Keep fields/maxNodes bounded unless full evidence is required. If selector is supplied without depth, the adapter searches the full tree and returns the matched branch. When this QmlAgent build has QtQuick3D support, View3D scenes include Model/camera/light/material frontend nodes automatically. 3D nodes are structural evidence, not QQuickItem click targets. Request fields=[\"render3D\"] for Quick3D Model world bounds, projected screen bounds, camera distance, and approximate frustum evidence."),
+             QStringLiteral("Get a projected Qt Quick UI tree. Keep fields/maxNodes bounded unless full evidence is required. If selector is supplied without depth, the adapter searches the full tree and returns the matched branch. When this QmlAgent build has QtQuick3D support, View3D scenes include Model/camera/light/material frontend nodes automatically. The View3D boundary is tagged renderKind=\"QtQuick3D\"; scene descendants use kind=\"QQuick3DObject\" and are structural evidence, not QQuickItem click targets. Request fields=[\"render3D\"] for Quick3D Model world bounds, projected screen bounds, camera distance, and approximate frustum evidence. QtCanvasPainter item subclasses are tagged renderKind=\"QtCanvasPainter\". Request app-exposed paint-state properties to inspect structured brushes, patterns, shadows, images, and bounded path evidence; this is application state, not an observed draw-call stream."),
              schema({
                  { QStringLiteral("depth"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("integer") } } },
                  { QStringLiteral("includeInvisible"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("boolean") } } },
@@ -155,7 +155,7 @@ QJsonArray toolList()
                  { QStringLiteral("collapseRepeated"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("boolean") } } },
              })),
         tool(QStringLiteral("qmlagent_ui_query"),
-             QStringLiteral("Query nodes by stable QmlAgent selector. Defaults to verbosity=\"summary\" to protect agent context; ask for verbosity=\"full\" only when omittedFields/nextHints say deeper node evidence is needed. Prefer selector over nodeId across restarts. When this QmlAgent build has QtQuick3D support, View3D scenes include Model/camera/light/material frontend nodes automatically. Those nodes are structural evidence, not QQuickItem click targets. Request fields=[\"render3D\"] on Quick3D Model nodes for world bounds, projected screen bounds, camera distance, and approximate frustum evidence. For repeated delegates, try id/objectName plus index such as id=\"boxRect\" index=0 before adding objectName or using session-local nodeId. Requested properties are returned even when fields is projected. If a single qmlagent-launcher session exists, this routes through the launcher automatically; no direct attach is needed. Use this to find selectors before qmlagent_input_drag, qmlagent_input_wheel, qmlagent_ui_wait_for, or qmlagent_workflow_click_and_wait."),
+             QStringLiteral("Query nodes by stable QmlAgent selector. Defaults to verbosity=\"summary\" to protect agent context; ask for verbosity=\"full\" only when omittedFields/nextHints say deeper node evidence is needed. Prefer selector over nodeId across restarts. When this QmlAgent build has QtQuick3D support, View3D scenes include Model/camera/light/material frontend nodes automatically. The View3D boundary is tagged renderKind=\"QtQuick3D\"; scene descendants use kind=\"QQuick3DObject\" and are structural evidence, not QQuickItem click targets. Request fields=[\"render3D\"] on Quick3D Model nodes for world bounds, projected screen bounds, camera distance, and approximate frustum evidence. QtCanvasPainter item subclasses are tagged renderKind=\"QtCanvasPainter\". Request app-exposed paint-state properties to inspect structured brushes, patterns, shadows, images, and bounded path evidence; this is application state, not an observed draw-call stream. For repeated delegates, try id/objectName plus index such as id=\"boxRect\" index=0 before adding objectName or using session-local nodeId. Requested properties are returned even when fields is projected. If a single qmlagent-launcher session exists, this routes through the launcher automatically; no direct attach is needed. Use this to find selectors before qmlagent_input_drag, qmlagent_input_wheel, qmlagent_ui_wait_for, or qmlagent_workflow_click_and_wait."),
              schema({
                  { QStringLiteral("selector"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("string") } } },
                  { QStringLiteral("includeSource"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("boolean") } } },
@@ -413,11 +413,16 @@ QJsonArray toolList()
                  { QStringLiteral("modifiers"), stringArray },
              }), { QStringLiteral("type"), QStringLiteral("points") })),
         tool(QStringLiteral("qmlagent_input_key"),
-             QStringLiteral("Dispatch a key event, optionally targeting selector/nodeId first."),
+             QStringLiteral("Dispatch a key event through Qt input. Target selector/nodeId to focus a node first, or pass windowId from UI.getTree to route to that QQuickWindow's current focus in a multi-window app. When a node and windowId are both supplied, QmlAgent rejects a cross-window mismatch instead of silently choosing one. Verify the resulting state with qmlagent_ui_query or qmlagent_ui_wait_for."),
              schema(withNodeRef({
                  { QStringLiteral("key"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("string") } } },
                  { QStringLiteral("keyCode"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("integer") } } },
                  { QStringLiteral("text"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("string") } } },
+                 { QStringLiteral("windowId"), QJsonObject{
+                     { QStringLiteral("type"), QStringLiteral("integer") },
+                     { QStringLiteral("minimum"), 1 },
+                     { QStringLiteral("description"), QStringLiteral("1-based QQuickWindow id reported by UI.getTree; routes untargeted keys to that window's current focus.") },
+                 } },
                  { QStringLiteral("type"), QJsonObject{
                      { QStringLiteral("type"), QStringLiteral("string") },
                      { QStringLiteral("enum"), QJsonArray{
@@ -429,9 +434,14 @@ QJsonArray toolList()
                  { QStringLiteral("modifiers"), stringArray },
              }))),
         tool(QStringLiteral("qmlagent_input_type_text"),
-             QStringLiteral("Type text through synthetic key input, optionally targeting selector/nodeId first. Pass replaceExisting=true to clear the field's current content first in the same call; without it, text lands at the target's normal cursor/selection state. If click-to-focus fails, call qmlagent_input_focus on the same selector/nodeId, then retry; focus_failed results include nextHints. Verify final text with qmlagent_ui_query or qmlagent_ui_wait_for."),
+             QStringLiteral("Type text through synthetic key input. Target selector/nodeId to focus a text item first, or pass windowId from UI.getTree to route to that QQuickWindow's current focus in a multi-window app. When a node and windowId are both supplied, QmlAgent rejects a cross-window mismatch. Pass replaceExisting=true to clear the field's current content first in the same call; without it, text lands at the target's normal cursor/selection state. If click-to-focus fails, call qmlagent_input_focus on the same selector/nodeId, then retry; focus_failed results include nextHints. Verify final text with qmlagent_ui_query or qmlagent_ui_wait_for."),
              schema(withNodeRef({
                         { QStringLiteral("text"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("string") } } },
+                        { QStringLiteral("windowId"), QJsonObject{
+                            { QStringLiteral("type"), QStringLiteral("integer") },
+                            { QStringLiteral("minimum"), 1 },
+                            { QStringLiteral("description"), QStringLiteral("1-based QQuickWindow id reported by UI.getTree; routes untargeted text to that window's current focus.") },
+                        } },
                         { QStringLiteral("replaceExisting"), QJsonObject{
                             { QStringLiteral("type"), QStringLiteral("boolean") },
                             { QStringLiteral("description"), QStringLiteral("Clear existing content before typing (one call instead of clear_text + type_text).") },

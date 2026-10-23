@@ -202,6 +202,20 @@ void tst_QQmlAgentProtocol::mcpToolSchemasExposeAgentFirstContracts()
                     .contains(QStringLiteral("contains")),
              qPrintable(QJsonDocument(workflowKey).toJson(QJsonDocument::Compact)));
 
+    for (const QString &toolName : { QStringLiteral("qmlagent_input_key"),
+                                     QStringLiteral("qmlagent_input_type_text") }) {
+        const QJsonObject keyboardTool = mcpToolByName(toolName);
+        QVERIFY2(!keyboardTool.isEmpty(), qPrintable(toolName));
+        const QJsonObject windowId = keyboardTool.value(QStringLiteral("inputSchema")).toObject()
+                .value(QStringLiteral("properties")).toObject()
+                .value(QStringLiteral("windowId")).toObject();
+        QCOMPARE(windowId.value(QStringLiteral("type")).toString(), QStringLiteral("integer"));
+        QCOMPARE(windowId.value(QStringLiteral("minimum")).toInt(), 1);
+        QVERIFY2(keyboardTool.value(QStringLiteral("description")).toString()
+                         .contains(QStringLiteral("multi-window")),
+                 qPrintable(QJsonDocument(keyboardTool).toJson(QJsonDocument::Compact)));
+    }
+
     const QJsonObject uiWait = mcpToolByName(QStringLiteral("qmlagent_ui_wait_for"));
     QVERIFY(!uiWait.isEmpty());
     const QJsonArray waitOperators = uiWait.value(QStringLiteral("inputSchema")).toObject()
@@ -262,6 +276,18 @@ void tst_QQmlAgentProtocol::mcpToolSchemasExposeAgentFirstContracts()
     QVERIFY2(getTree.value(QStringLiteral("description")).toString()
                     .contains(QStringLiteral("render3D")),
              qPrintable(QJsonDocument(getTree).toJson(QJsonDocument::Compact)));
+    QVERIFY2(getTree.value(QStringLiteral("description")).toString()
+                    .contains(QStringLiteral("renderKind=\"QtQuick3D\"")),
+             qPrintable(QJsonDocument(getTree).toJson(QJsonDocument::Compact)));
+    QVERIFY2(getTree.value(QStringLiteral("description")).toString()
+                    .contains(QStringLiteral("kind=\"QQuick3DObject\"")),
+             qPrintable(QJsonDocument(getTree).toJson(QJsonDocument::Compact)));
+    QVERIFY2(getTree.value(QStringLiteral("description")).toString()
+                    .contains(QStringLiteral("renderKind=\"QtCanvasPainter\"")),
+             qPrintable(QJsonDocument(getTree).toJson(QJsonDocument::Compact)));
+    QVERIFY2(getTree.value(QStringLiteral("description")).toString()
+                    .contains(QStringLiteral("not an observed draw-call stream")),
+             qPrintable(QJsonDocument(getTree).toJson(QJsonDocument::Compact)));
     const QJsonObject query = mcpToolByName(QStringLiteral("qmlagent_ui_query"));
     QVERIFY(!query.isEmpty());
     QVERIFY(!query.value(QStringLiteral("inputSchema")).toObject()
@@ -272,6 +298,9 @@ void tst_QQmlAgentProtocol::mcpToolSchemasExposeAgentFirstContracts()
              qPrintable(QJsonDocument(query).toJson(QJsonDocument::Compact)));
     QVERIFY2(query.value(QStringLiteral("description")).toString()
                     .contains(QStringLiteral("projected screen bounds")),
+             qPrintable(QJsonDocument(query).toJson(QJsonDocument::Compact)));
+    QVERIFY2(query.value(QStringLiteral("description")).toString()
+                    .contains(QStringLiteral("app-exposed paint-state properties")),
              qPrintable(QJsonDocument(query).toJson(QJsonDocument::Compact)));
 
     const QJsonObject pick3D = mcpToolByName(QStringLiteral("qmlagent_render_pick3d"));

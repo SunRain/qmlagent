@@ -132,6 +132,8 @@ for `Model`, camera, light, material, texture, and related nodes. These nodes
 are structural/source evidence, not `QQuickItem` click targets. For `Model`
 visibility/debugging, request `fields:["render3D"]` to get world bounds,
 projected screen bounds, camera distance, and approximate frustum evidence.
+The `View3D` boundary reports `renderKind:"QtQuick3D"`; its traversed scene
+objects report `kind:"QQuick3DObject"` without a render kind.
 Use `qmlagent_diagnostics_analyze_tree` or `qmlagent_diagnostics_analyze_node`
 with `checks:["quick3D"]` to focus on View3D camera/light setup, Model
 material/scale, texture source, and render3D-backed frustum evidence.
@@ -141,6 +143,16 @@ repeated 3D delegates instead of visual order or session-local node ids.
 Use `qmlagent_render_pick3d` or `Render.pick3D` on a `View3D` selector for
 read-only hit-test evidence at a View3D-local coordinate; it does not deliver
 input events.
+
+For QtCanvasPainter applications, a queried node that reports
+`renderKind:"QtCanvasPainter"` is an application `QCanvasPainterItem`
+subclass. Explicitly request the natural paint-state properties it exposes.
+QmlAgent serializes public brushes, gradients, patterns, shadows, images, and
+bounded path endpoint evidence. Treat these values, and any app-provided
+`QVariantMap` operation log, as application-reported state rather than an
+observed draw-call stream. The public CanvasPainter API does not expose the
+retained command sequence, custom-brush shader/data payloads, or original image
+filenames.
 
 On an input result, `delivered:true` is the action-success signal. The nested
 `settle` object is render-loop-only (`verificationRole: render-loop-settle-only`):
@@ -217,6 +229,10 @@ supported.
   expression, source location, and dependency limitations.
 - Use `UI.waitFor` or workflow tools for transitions, popups, loaders,
   animations, and async post-action state. Do not use sleeps.
+- In multi-window apps, use the `windowId` reported by `UI.getTree` with
+  `qmlagent_input_key` or `qmlagent_input_type_text` when input should go to a
+  window's current focus rather than a specific node. Supplying both a node
+  target and `windowId` validates that they belong to the same window.
 - Use `qmlagent_ui_query_many` or shell `qmlagentctl query-many` for multiple
   selectors/properties after one action instead of serial query calls.
 - If click/read evidence reports `center_outside_viewport`, use
