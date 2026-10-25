@@ -72,22 +72,28 @@ target_compile_definitions(tst_qmlagentintegration PRIVATE
     TEST_QMLAGENTLAUNCHER_EXECUTABLE="$<TARGET_FILE:qmlagent-launcher>"
 )
 
-qt_add_executable(tst_qmlagentlauncher tst_qmlagentlauncher.cpp)
-target_link_libraries(tst_qmlagentlauncher PRIVATE Qt6::Core Qt6::Test)
-target_compile_definitions(tst_qmlagentlauncher PRIVATE
-    TEST_QMLAGENTCTL_EXECUTABLE="$<TARGET_FILE:qmlagentctl>"
-    TEST_QMLAGENTMCP_EXECUTABLE="$<TARGET_FILE:qmlagent-mcp>"
-    TEST_QMLAGENTLAUNCHER_EXECUTABLE="$<TARGET_FILE:qmlagent-launcher>"
-    TEST_QMLAGENTSMOKE_EXECUTABLE="$<TARGET_FILE:qmlagent_smoke>"
-)
-add_dependencies(tst_qmlagentlauncher qmlagentctl qmlagent-mcp qmlagent-launcher qmlagent_smoke
-                 QQmlAgentServiceFactoryPlugin)
-add_test(NAME qmlagent_integration_launcher COMMAND tst_qmlagentlauncher)
-set_tests_properties(qmlagent_integration_launcher PROPERTIES
-    ENVIRONMENT "QT_QUICK_CONTROLS_STYLE=Basic"
-    ENVIRONMENT_MODIFICATION "QT_PLUGIN_PATH=path_list_prepend:${CMAKE_BINARY_DIR}/plugins"
-    TIMEOUT 30
-)
+foreach(_suite launcher launcherliveness launchergateway)
+    qt_add_executable(tst_qmlagent${_suite}
+        tst_qmlagent${_suite}.cpp
+        launcherfixture.cpp
+        launchermailboxfixture.cpp
+    )
+    target_link_libraries(tst_qmlagent${_suite} PRIVATE Qt6::Core Qt6::Network Qt6::Test)
+    target_compile_definitions(tst_qmlagent${_suite} PRIVATE
+        TEST_QMLAGENTCTL_EXECUTABLE="$<TARGET_FILE:qmlagentctl>"
+        TEST_QMLAGENTMCP_EXECUTABLE="$<TARGET_FILE:qmlagent-mcp>"
+        TEST_QMLAGENTLAUNCHER_EXECUTABLE="$<TARGET_FILE:qmlagent-launcher>"
+        TEST_QMLAGENTSMOKE_EXECUTABLE="$<TARGET_FILE:qmlagent_smoke>"
+    )
+    add_dependencies(tst_qmlagent${_suite} qmlagentctl qmlagent-mcp qmlagent-launcher qmlagent_smoke
+                     QQmlAgentServiceFactoryPlugin)
+    add_test(NAME qmlagent_integration_${_suite} COMMAND tst_qmlagent${_suite})
+    set_tests_properties(qmlagent_integration_${_suite} PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_CONTROLS_STYLE=Basic;QMLAGENT_SMOKE_APP=$<TARGET_FILE:qmlagent_smoke>"
+        ENVIRONMENT_MODIFICATION "QT_PLUGIN_PATH=path_list_prepend:${CMAKE_BINARY_DIR}/plugins"
+        TIMEOUT 30
+    )
+endforeach()
 
 # One integration binary, registered as slot groups so a failure names its
 # area and each group gets its own timeout.

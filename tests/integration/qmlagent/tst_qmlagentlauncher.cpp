@@ -1,72 +1,15 @@
 // Copyright (C) 2026 Penk Chen <penkia@gmail.com>
 // SPDX-License-Identifier: Apache-2.0
 
+#include "launcherfixture.h"
+
 #include <QtCore/qdir.h>
-#include <QtCore/qelapsedtimer.h>
 #include <QtCore/qfile.h>
 #include <QtCore/qfileinfo.h>
 #include <QtCore/qjsonarray.h>
-#include <QtCore/qjsondocument.h>
-#include <QtCore/qjsonobject.h>
-#include <QtCore/qprocess.h>
-#include <QtCore/qsavefile.h>
-#include <QtCore/qtemporarydir.h>
 #include <QtTest/qtest.h>
 
-#include <limits>
-#include <memory>
-
-namespace {
-constexpr int ProcessTimeoutMs = 5000;
-constexpr qint64 UnobservablePid = std::numeric_limits<int>::max();
-
-struct ProcessResult
-{
-    int exitCode = -1;
-    QByteArray output;
-    QByteArray error;
-};
-
-class OwnedProcess : public QProcess
-{
-public:
-    ~OwnedProcess() override
-    {
-        if (state() == NotRunning)
-            return;
-        terminate();
-        if (!waitForFinished(ProcessTimeoutMs)) {
-            kill();
-            waitForFinished(ProcessTimeoutMs);
-        }
-    }
-};
-
-static QJsonObject parseObject(const QByteArray &bytes)
-{
-    return QJsonDocument::fromJson(bytes).object();
-}
-
-static QByteArray jsonLine(const QJsonObject &object)
-{
-    return QJsonDocument(object).toJson(QJsonDocument::Compact) + '\n';
-}
-
-static QJsonObject toolRequest(const QString &name, const QJsonObject &arguments)
-{
-    return {
-        { QStringLiteral("jsonrpc"), QStringLiteral("2.0") },
-        { QStringLiteral("id"), 2 },
-        { QStringLiteral("method"), QStringLiteral("tools/call") },
-        { QStringLiteral("params"), QJsonObject{
-            { QStringLiteral("name"), name },
-            { QStringLiteral("arguments"), arguments },
-        } },
-    };
-}
-} // namespace
-
-class QmlAgentLauncherTest : public QObject
+class QmlAgentLauncherTest : public QObject, public LauncherTestFixture
 {
     Q_OBJECT
 
@@ -78,146 +21,13 @@ private slots:
     void unreachableMailboxRetainsRegistry();
     void stopDoesNotSignalRegistryPids_data();
     void stopDoesNotSignalRegistryPids();
+    void sessionsExposeHealthCwdAndNamespace();
 
-private:
-    void configure(QProcess *process) const;
-    ProcessResult run(const QString &program, const QStringList &arguments,
-                      const QByteArray &input = {}) const;
-    ProcessResult ctl(const QStringList &arguments) const;
-    QJsonObject mcp(const QString &tool, const QJsonObject &arguments) const;
-    QStringList registryPaths(const QString &sessionId) const;
-    bool writeRegistry(const QStringList &paths, const QJsonObject &metadata) const;
-    void verifyRegistry(const QStringList &paths, const QByteArray &expected) const;
-    QJsonObject launch(OwnedProcess *launcher) const;
-
-    std::unique_ptr<QTemporaryDir> m_root;
-    QProcessEnvironment m_environment;
 };
 
 void QmlAgentLauncherTest::init()
 {
-    m_root = std::make_unique<QTemporaryDir>();
-    QVERIFY2(m_root->isValid(), qPrintable(m_root->errorString()));
-    m_environment = QProcessEnvironment::systemEnvironment();
-    const QDir root(m_root->path());
-    const QStringList names{ QStringLiteral("tmp"), QStringLiteral("data"),
-                             QStringLiteral("cache") };
-    const QStringList variables{ QStringLiteral("TMPDIR"), QStringLiteral("XDG_DATA_HOME"),
-                                 QStringLiteral("XDG_CACHE_HOME") };
-    for (int i = 0; i < names.size(); ++i) {
-        QVERIFY(root.mkpath(names.at(i)));
-        m_environment.insert(variables.at(i), root.filePath(names.at(i)));
-    }
-    m_environment.insert(QStringLiteral("QT_QPA_PLATFORM"), QStringLiteral("offscreen"));
-}
-
-void QmlAgentLauncherTest::configure(QProcess *process) const
-{
-    process->setWorkingDirectory(m_root->path());
-    process->setProcessEnvironment(m_environment);
-}
-
-ProcessResult QmlAgentLauncherTest::run(const QString &program, const QStringList &arguments,
-                                       const QByteArray &input) const
-{
-    OwnedProcess process;
-    configure(&process);
-    process.start(program, arguments);
-    if (!process.waitForStarted(ProcessTimeoutMs))
-        return { -1, {}, process.errorString().toUtf8() };
-    if (!input.isEmpty())
-        process.write(input);
-    process.closeWriteChannel();
-    if (!process.waitForFinished(ProcessTimeoutMs))
-        return { -1, process.readAllStandardOutput(), process.errorString().toUtf8() };
-    return { process.exitStatus() == QProcess::NormalExit ? process.exitCode() : -1,
-             process.readAllStandardOutput(), process.readAllStandardError() };
-}
-
-ProcessResult QmlAgentLauncherTest::ctl(const QStringList &arguments) const
-{
-    QStringList options = arguments;
-    options.append({ QStringLiteral("--format"), QStringLiteral("compact"),
-                     QStringLiteral("--timeout"), QStringLiteral("1000") });
-    return run(QString::fromLocal8Bit(TEST_QMLAGENTCTL_EXECUTABLE), options);
-}
-
-QJsonObject QmlAgentLauncherTest::mcp(const QString &tool, const QJsonObject &arguments) const
-{
-    const QByteArray input = QByteArrayLiteral(
-            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}\n")
-            + jsonLine(toolRequest(tool, arguments));
-    const ProcessResult result = run(QString::fromLocal8Bit(TEST_QMLAGENTMCP_EXECUTABLE),
-                                    { QStringLiteral("--timeout"), QStringLiteral("1000") }, input);
-    if (result.exitCode != 0)
-        return { { QStringLiteral("processError"), QString::fromUtf8(result.error) } };
-    for (const QByteArray &line : result.output.split('\n')) {
-        const QJsonObject response = parseObject(line);
-        if (response.value(QStringLiteral("id")).toInt() == 2)
-            return response.value(QStringLiteral("result")).toObject();
-    }
-    return { { QStringLiteral("missingResponse"), QString::fromUtf8(result.output) } };
-}
-
-QStringList QmlAgentLauncherTest::registryPaths(const QString &sessionId) const
-{
-    const QDir root(m_root->path());
-    const QString name = sessionId + QStringLiteral(".json");
-    return {
-        root.filePath(QStringLiteral(".qmlagent/launcher-sessions/") + name),
-        root.filePath(QStringLiteral("tmp/QmlAgent/launcher-sessions/") + name),
-        root.filePath(QStringLiteral("data/QmlAgent/launcher-sessions/") + name),
-    };
-}
-
-bool QmlAgentLauncherTest::writeRegistry(const QStringList &paths,
-                                        const QJsonObject &metadata) const
-{
-    for (const QString &path : paths) {
-        if (!QDir().mkpath(QFileInfo(path).absolutePath()))
-            return false;
-        QSaveFile file(path);
-        if (!file.open(QIODevice::WriteOnly) || file.write(jsonLine(metadata)) < 0 || !file.commit())
-            return false;
-    }
-    return true;
-}
-
-void QmlAgentLauncherTest::verifyRegistry(const QStringList &paths, const QByteArray &expected) const
-{
-    for (const QString &path : paths) {
-        QFile file(path);
-        QVERIFY2(file.open(QIODevice::ReadOnly), qPrintable(path + file.errorString()));
-        QCOMPARE(file.readAll(), expected);
-    }
-}
-
-QJsonObject QmlAgentLauncherTest::launch(OwnedProcess *launcher) const
-{
-    configure(launcher);
-    launcher->start(QString::fromLocal8Bit(TEST_QMLAGENTLAUNCHER_EXECUTABLE), {
-        QStringLiteral("--print-json"), QStringLiteral("app"),
-        QString::fromLocal8Bit(TEST_QMLAGENTSMOKE_EXECUTABLE),
-    });
-    if (!launcher->waitForStarted(ProcessTimeoutMs))
-        return {};
-    QElapsedTimer timer;
-    timer.start();
-    QByteArray pending;
-    while (timer.elapsed() < ProcessTimeoutMs) {
-        pending += launcher->readAllStandardOutput();
-        while (pending.contains('\n')) {
-            const qsizetype end = pending.indexOf('\n');
-            const QJsonObject event = parseObject(pending.left(end));
-            pending.remove(0, end + 1);
-            if (event.value(QStringLiteral("event")) == QLatin1String("sessionReady"))
-                return event;
-        }
-        if (launcher->state() == QProcess::NotRunning)
-            break;
-        launcher->waitForReadyRead(ProcessTimeoutMs - int(timer.elapsed()));
-    }
-    return {};
+    QVERIFY(initialize());
 }
 
 void QmlAgentLauncherTest::reachableMailboxIgnoresRegistryPid_data()
@@ -230,6 +40,8 @@ void QmlAgentLauncherTest::reachableMailboxIgnoresRegistryPid_data()
 void QmlAgentLauncherTest::reachableMailboxIgnoresRegistryPid()
 {
     QFETCH(bool, useMcp);
+    if (!canBindUnixSocket())
+        QSKIP("This environment does not permit Unix domain socket listens");
     OwnedProcess launcher;
     const QJsonObject ready = launch(&launcher);
     QVERIFY2(!ready.isEmpty(), launcher.readAllStandardError().constData());
@@ -338,6 +150,62 @@ void QmlAgentLauncherTest::stopDoesNotSignalRegistryPids()
     QCOMPARE(unrelated.waitForFinished(100), false);
     QCOMPARE(unrelated.state(), QProcess::Running);
     verifyRegistry(paths, jsonLine(metadata));
+}
+
+void QmlAgentLauncherTest::sessionsExposeHealthCwdAndNamespace()
+{
+    if (!canBindUnixSocket())
+        QSKIP("This environment does not permit Unix domain socket listens");
+    QTemporaryDir firstWorkingDir;
+    QTemporaryDir secondWorkingDir;
+    QVERIFY(firstWorkingDir.isValid());
+    QVERIFY(secondWorkingDir.isValid());
+
+    OwnedProcess first;
+    OwnedProcess second;
+    const QJsonObject firstReady = launch(&first, firstWorkingDir.path());
+    const QJsonObject secondReady = launch(&second, secondWorkingDir.path());
+    QVERIFY2(!firstReady.isEmpty(), first.readAllStandardError().constData());
+    QVERIFY2(!secondReady.isEmpty(), second.readAllStandardError().constData());
+
+    const ProcessResult result = ctl({ QStringLiteral("sessions") });
+    QCOMPARE(result.exitCode, 0);
+    const QJsonArray sessions = parseObject(result.output).value(QStringLiteral("sessions")).toArray();
+    QCOMPARE(sessions.size(), 2);
+    QStringList cwds;
+    for (const QJsonValue &value : sessions) {
+        const QJsonObject session = value.toObject();
+        QCOMPARE(session.value(QStringLiteral("sessionReady")).toBool(), true);
+        QCOMPARE(session.value(QStringLiteral("targetRunning")).toBool(), true);
+        QVERIFY(!session.value(QStringLiteral("launcherCwd")).toString().isEmpty());
+        cwds.append(session.value(QStringLiteral("launcherCwd")).toString());
+    }
+    QVERIFY(cwds.contains(firstWorkingDir.path()));
+    QVERIFY(cwds.contains(secondWorkingDir.path()));
+
+    const QJsonObject status = mcp(QStringLiteral("qmlagent_target_status"), {})
+            .value(QStringLiteral("structuredContent")).toObject();
+    const QJsonObject gateway = status.value(QStringLiteral("launcherGateway")).toObject();
+#if defined(Q_OS_LINUX)
+    const QJsonObject pidNamespace = gateway.value(QStringLiteral("pidNamespace")).toObject();
+    QVERIFY(!pidNamespace.isEmpty());
+    QVERIFY(!pidNamespace.value(QStringLiteral("client")).toString().isEmpty());
+    QVERIFY(pidNamespace.value(QStringLiteral("sameNamespace")).isNull());
+    QVERIFY(pidNamespace.value(QStringLiteral("launcher")).isNull());
+#else
+    QVERIFY(!gateway.contains(QStringLiteral("pidNamespace")));
+#endif
+    QVERIFY(!gateway.contains(QStringLiteral("pidNamespaceHint")));
+    QCOMPARE(gateway.value(QStringLiteral("reachableSessionCount")).toInt(), 2);
+    const QString firstId = firstReady.value(QStringLiteral("launcherSession")).toString();
+    QCOMPARE(ctl({ QStringLiteral("stop"), QStringLiteral("--session"), firstId }).exitCode, 0);
+    QVERIFY(first.waitForFinished(ProcessTimeoutMs));
+    QCOMPARE(second.state(), QProcess::Running);
+    const QJsonArray remaining = parseObject(ctl({ QStringLiteral("sessions") }).output)
+                                        .value(QStringLiteral("sessions")).toArray();
+    QCOMPARE(remaining.size(), 1);
+    QCOMPARE(remaining.first().toObject().value(QStringLiteral("launcherSession")).toString(),
+             secondReady.value(QStringLiteral("launcherSession")).toString());
 }
 
 QTEST_GUILESS_MAIN(QmlAgentLauncherTest)

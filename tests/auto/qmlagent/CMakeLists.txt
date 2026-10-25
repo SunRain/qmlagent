@@ -43,6 +43,28 @@ add_test(NAME qmlagentprotocol
     COMMAND tst_qmlagentprotocol
 )
 
+qt_add_executable(tst_qmlagentlaunchersessions
+    tst_qmlagentlaunchersessions.cpp
+    ${PROJECT_SOURCE_DIR}/tools/qmlagent/qmlagentlauncher.cpp
+    ${PROJECT_SOURCE_DIR}/tools/qmlagent/qmlagentlaunchercleanup.cpp
+    ${PROJECT_SOURCE_DIR}/tools/qmlagent/qmlagentpaths.cpp
+    ${PROJECT_SOURCE_DIR}/tools/qmlagent/qmlagentprocess_unix.cpp
+)
+
+target_include_directories(tst_qmlagentlaunchersessions PRIVATE
+    ${PROJECT_SOURCE_DIR}/tools/qmlagent
+)
+
+target_link_libraries(tst_qmlagentlaunchersessions PRIVATE
+    Qt6::Core
+    Qt6::Network
+    Qt6::Test
+)
+
+add_test(NAME qmlagentlaunchersessions
+    COMMAND tst_qmlagentlaunchersessions
+)
+
 qt_add_executable(tst_qmlagentinput
     tst_qmlagentinput.cpp
     ${PROJECT_SOURCE_DIR}/src/plugins/qmltooling/qmldbg_agent/qqmlagentactionability.cpp
