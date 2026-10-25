@@ -278,6 +278,47 @@ Actionability failure `reason` values (also embedded as `actionabilityReasons` /
 | `preview.reload_not_supported` | Session was started with `app`, not `preview` (`requiredLaunchCommand`, `nextActions` attached) |
 | `preview.reload_connect_failed` / `preview.reload_timeout` / `preview.reload_invalid_response` | Preview shell socket failures |
 
+### Launcher gateway observability (`qmlagent_target_status`)
+
+Each `launcherGateway.session` summary reports the launcher's own view of
+target health: `sessionReady` and `targetRunning` come directly from
+`Session.status`; both are `null` when the control channel cannot be probed,
+never a guessed `false`. `launcherCwd` is the launcher's absolute working
+directory, which distinguishes sessions that share a launch command but run in
+different projects.
+
+On Linux builds `launcherGateway.pidNamespace` is always present as an object
+with `launcher`, `client`, and `sameNamespace` fields. Values are
+`readlink("/proc/<pid>/ns/pid")` inode strings; a side that cannot be observed
+is `null`. `sameNamespace` is `null` unless both sides are known. With zero
+or multiple reachable sessions no single launcher is selected, so `launcher`
+and `sameNamespace` are `null`; each listed session has its own namespace
+diagnostics. Only a known difference adds `pidNamespaceHint`, stating that PIDs
+belong to the launcher namespace and must be validated through mailbox RPC
+status rather than `ps` from a sandboxed shell. Non-Linux builds omit the
+namespace fields and hint entirely, including from individual session summaries.
+
+Discovery retains unreachable registry records by default. On Linux, a record
+can be cleaned only in the client's recorded PID namespace: an observable
+non-launcher `cmdline` proves PID reuse, or a local process lookup reports
+`ESRCH` (not a permission error). Runtime ownership must also be established
+from the recorded `controlMailbox`, session ID and PID, without guessing from
+the client's temporary directory. Symlinks, conflicting endpoints, or unknown
+runtime contents prevent cleanup. Proven-stale records with an owned runtime
+use a bounded 20ms status probe rather than the normal one-second wait; a
+successful RPC still wins, and all other records use the normal probe.
+
+All discovery and routing entry points use this same decision. Verified
+runtime and identical registry copies are moved to Trash, not permanently
+deleted; unavailable Trash support is an error, never a recursive-delete
+fallback. `staleRemoved`/`staleRemovals` count only complete cleanups and include
+the reason (`pid_reuse_verified` or `pid_absent_verified`) and `moved` entries
+with original `path` and recoverable `trashPath`. A failed or partial cleanup
+remains listed with `controlReachable:false` and `cleanupError`; the top-level
+`cleanupFailures` list (under `launcherGateway` for MCP) reports the same
+`errors` and successfully `moved` paths. Cross-namespace, unobservable, and
+non-Linux records are retained without inferring death from mailbox failure.
+
 ## 6. Evidence conventions
 
 - **`verificationRole`** states what a success proves: `"input-delivery-only"` (event reached the window — not that the app reacted), `"render-loop-settle-only"` (`settle` objects), `"post-dispatch evidence only"` (`postDispatch`), `"setup-only"` (`Runtime.*`). Screenshots carry `evidenceRole:"fallback-visual"`, `primaryOracle:false`, `structuredFirst:true`.

@@ -107,6 +107,26 @@ if your target exits mid-task: a pinned call fails cleanly instead of silently
 routing to a surviving session and returning another app's scene as if it were
 yours.
 
+Before sending request/response tools, confirm the session is actually usable:
+`launcherGateway.session.targetRunning` must be `true`. `sessionReady` or
+`targetRunning` being `null` means the control channel could not be probed —
+it is unknown, not `false`; a `false` value means the launcher is reachable
+but the target died, so rebuild or relaunch before request-backed tools.
+
+Do not validate launcher PIDs with `ps` from a sandboxed shell. On Linux,
+`launcherGateway.pidNamespace.sameNamespace` compares the launcher and client
+PID namespaces: `null` means one side is unknown — it is not a cross-namespace
+diagnosis. The mailbox RPC status reported by `qmlagent_target_status` is the
+authoritative liveness signal.
+
+Session discovery has a side effect: verified same-namespace stale sessions
+are moved to Trash and reported under `launcherGateway.staleRemovals` (with
+`staleRemoved` as the count). Failed cleanups stay visible under
+`cleanupFailures` — they are not counted as removed. Never delete registry or
+mailbox files yourself; a session disappearing from the list may be this
+automatic cleanup. When two sessions share a launch command, use
+`launcherCwd` to tell which project each belongs to.
+
 Normal order:
 
 ```txt

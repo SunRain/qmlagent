@@ -327,6 +327,13 @@ access to the registry, control mailbox, and reply directory. An inaccessible
 control channel is reported as unreachable without deleting the session's
 registry files. `stop` also requires a reachable launcher; it does not signal
 PIDs read from registry files, which may belong to another PID namespace.
+Do not double-check launcher PIDs with `ps` from a sandboxed shell — on Linux
+`qmlagent_target_status` reports `launcherGateway.pidNamespace` and a hint
+only when both namespace values are known and differ. Without one selected
+launcher, the comparison is `null`, not `false`. The mailbox RPC status remains
+the authoritative liveness signal. Verified same-namespace stale sessions are
+moved to Trash; cleanup failures stay visible under `cleanupFailures` instead
+of being counted as removed.
 
 Raw protocol escape hatch:
 

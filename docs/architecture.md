@@ -47,13 +47,24 @@ the reply back to the requesting client's response file.
 **qmlagentctl and qmlagent-mcp** are the same binary
 (`tools/qmlagent/main.cpp`), dispatched on `argv[0]`. Both discover live
 launcher sessions by scanning the registry directories, validating each
-session file and probing `Session.status` through an existing control mailbox.
-Registry PIDs are descriptive, not process identities in the client's PID
-namespace. Discovery never removes registry files or recreates missing
-mailboxes; an unavailable endpoint is reported as `controlReachable:false`
-with a `controlError` and is excluded from routing. Both clients stop targets
-through the launcher's control channel only: an unreachable channel is an
-error, never a reason to signal unverified registry PIDs.
+session file and probing `Session.status` through an existing control mailbox;
+that RPC probe is the only authority on liveness. Registry PIDs are
+descriptive, not process identities in the client's PID namespace. Discovery
+does not recreate missing mailboxes and retains unavailable endpoints as
+`controlReachable:false` with a `controlError`, excluded from routing. On
+Linux, a stale record requires a recorded namespace identical to the client's,
+plus an observable non-launcher `cmdline` or a definite local `ESRCH`. Only a
+session-owned runtime, derived from the recorded mailbox, can take the short
+20ms probe; a reachable mailbox still overrides the registry evidence.
+Foreign-namespace, unreadable, or structurally unverified records retain the
+normal probe and are never declared dead from invisible PIDs alone. Cleanup
+rejects symlinks and unowned contents, moves verified artifacts to Trash,
+checks that the originals disappeared, and keeps failures visible. Discovery
+and command routing share this implementation in `qmlagentlauncher`; guarded
+filesystem cleanup lives in `qmlagentlaunchercleanup`.
+Both clients stop targets through the launcher's control channel only: an
+unreachable channel is an error, never a reason to signal unverified registry
+PIDs.
 `qmlagentctl` maps shell subcommands (`query`, `click`,
 `wait`, `call`, ...) onto `QmlAgent.request` envelopes through the mailbox; a
 `control.lock` `QLockFile` in the mailbox serializes concurrent clients per
