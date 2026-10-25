@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "qmlagentpaths.h"
+#include "qmlagentprocess.h"
 
 #include <private/qqmldebugclient_p.h>
 #include <private/qqmldebugconnection_p.h>
@@ -976,6 +977,11 @@ int main(int argc, char **argv)
     writeLauncherRegistryFiles(sessionId, {
         { QStringLiteral("launcherSession"), sessionId },
         { QStringLiteral("launcherPid"), qint64(QCoreApplication::applicationPid()) },
+        { QStringLiteral("launcherCwd"), QDir::current().absolutePath() },
+#if defined(Q_OS_LINUX)
+        { QStringLiteral("pidNamespace"), qmlagentPidNamespaceValue(qmlagentReadPidNamespace(
+                qint64(QCoreApplication::applicationPid()))) },
+#endif
         { QStringLiteral("targetPid"), launchedTargetPid },
         { QStringLiteral("targetExecutable"), QFileInfo(executable).absoluteFilePath() },
         { QStringLiteral("sessionType"), sessionType },

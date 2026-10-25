@@ -16,13 +16,21 @@ struct LauncherSession
     QJsonObject status;
 };
 
+struct LauncherSessionDiscovery
+{
+    QList<LauncherSession> sessions;
+    QJsonArray staleRemovals;
+    QJsonArray cleanupFailures;
+};
+
 // Send a request to an existing launcher mailbox; report transport failures in error.
 QJsonObject sendLauncherControlRequest(const QJsonObject &metadata, int timeoutMs,
                                       const QString &method, const QJsonObject &params,
                                       QString *error);
 
-// Probe control endpoints without treating registry PIDs as local process identities.
-QList<LauncherSession> discoverLauncherSessions(int timeoutMs);
+// Probe mailboxes and conservatively clean verified same-namespace stale
+// records. Failed cleanup remains visible in sessions and cleanupFailures.
+LauncherSessionDiscovery discoverLauncherSessions(int timeoutMs);
 
 // Serialize discovered sessions, including unreachable control-channel diagnostics.
 QJsonArray launcherSessionSummaries(const QList<LauncherSession> &sessions);

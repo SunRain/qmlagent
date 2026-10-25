@@ -13,6 +13,10 @@ set(qmlagent_client_sources
     qmlagentpaths.h
     qmlagentlauncher.cpp
     qmlagentlauncher.h
+    qmlagentlaunchercleanup.cpp
+    qmlagentlaunchercleanup.h
+    qmlagentprocess_unix.cpp
+    qmlagentprocess.h
 )
 
 # The Qt lib dir is kept in the install rpath so the tools also run when
@@ -52,6 +56,8 @@ qt_add_executable(qmlagent-launcher
     launcher_main.cpp
     qmlagentpaths.cpp
     qmlagentpaths.h
+    qmlagentprocess_unix.cpp
+    qmlagentprocess.h
 )
 
 target_link_libraries(qmlagent-launcher PRIVATE

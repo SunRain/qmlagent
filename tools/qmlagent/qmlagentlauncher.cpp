@@ -2,14 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "qmlagentlauncher.h"
+#include "qmlagentlaunchercleanup.h"
 #include "qmlagentpaths.h"
+#include "qmlagentprocess.h"
 
 #include <QtCore/qcoreapplication.h>
 #include <QtCore/qdeadlinetimer.h>
 #include <QtCore/qdir.h>
 #include <QtCore/qfile.h>
 #include <QtCore/qfileinfo.h>
+#include <QtCore/qjsonarray.h>
 #include <QtCore/qjsondocument.h>
+#include <QtCore/qjsonobject.h>
 #include <QtCore/qlockfile.h>
 #include <QtCore/qsavefile.h>
 #include <QtCore/qset.h>
@@ -124,6 +128,7 @@ static QJsonObject sendLauncherMailboxControlRequest(const QString &mailboxDir, 
 
     QLockFile controlLock(QDir(mailboxDir).filePath(QStringLiteral("control.lock")));
     controlLock.setStaleLockTime(5000);
+    const QDeadlineTimer deadline(timeoutMs);
     if (!controlLock.tryLock(qMax(0, timeoutMs))) {
         *error = QStringLiteral("Timed out acquiring qmlagent-launcher control lease for %1. "
                                 "Another agent process may be driving this launcher session.")
@@ -138,7 +143,7 @@ static QJsonObject sendLauncherMailboxControlRequest(const QString &mailboxDir, 
     if (method == QLatin1String("Session.stop"))
         controlLock.unlock();
 
-    return readLauncherMailboxResponse(responsePath, timeoutMs, error);
+    return readLauncherMailboxResponse(responsePath, int(deadline.remainingTime()), error);
 }
 
 QJsonObject sendLauncherControlRequest(const QJsonObject &metadata, int timeoutMs,
@@ -184,70 +189,111 @@ static QJsonObject launcherControlEndpointSummary(const LauncherSession &session
     return endpoint;
 }
 
-QList<LauncherSession> discoverLauncherSessions(int timeoutMs)
+static LauncherSession probeLauncherSession(const QJsonObject &metadata, int timeoutMs)
 {
-    QList<LauncherSession> sessions;
+    const QString staleReason = verifiedStaleLauncherReason(metadata);
+    QString runtime;
+    QString runtimeError;
+    // Only a same-namespace stale PID with a structurally owned runtime can
+    // skip the normal one-second wait. Still allow an already responsive
+    // mailbox to overrule registry evidence; malformed/foreign records always
+    // get the normal probe (including reachable mailboxes with rewritten PIDs).
+    const bool fastProbe = !staleReason.isEmpty()
+            && verifiedLauncherRuntime(metadata, &runtime, &runtimeError);
+    QString error;
+    const QJsonObject response = sendLauncherControlRequest(
+            metadata, qMin(timeoutMs, fastProbe ? 20 : 1000),
+            QStringLiteral("Session.status"), {}, &error);
+    QJsonObject status;
+    if (error.isEmpty()) {
+        status = response.value(QStringLiteral("result")).toObject();
+        status.insert(QStringLiteral("controlReachable"), true);
+    } else {
+        status = {
+            { QStringLiteral("controlReachable"), false },
+            { QStringLiteral("controlError"), error },
+            { QStringLiteral("sessionType"), metadata.value(QStringLiteral("sessionType")) },
+            { QStringLiteral("launchCommand"), metadata.value(QStringLiteral("launchCommand")) },
+            { QStringLiteral("reloadPreviewSupported"),
+              metadata.value(QStringLiteral("reloadPreviewSupported")) },
+        };
+    }
+    return { metadata.value(QStringLiteral("launcherSession")).toString(), metadata, status };
+}
+
+LauncherSessionDiscovery discoverLauncherSessions(int timeoutMs)
+{
+    LauncherSessionDiscovery discovery;
     QSet<QString> seenSessionIds;
-    for (const QString &registryDir : launcherRegistryDirs()) {
+    const QStringList registryDirs = launcherRegistryDirs();
+    for (const QString &registryDir : registryDirs) {
         const QDir dir(registryDir);
-        const QStringList entries = dir.entryList({ QStringLiteral("*.json") }, QDir::Files);
-        for (const QString &entry : entries) {
+        for (const QString &entry : dir.entryList({ QStringLiteral("*.json") }, QDir::Files)) {
             const QString path = dir.filePath(entry);
+            if (QFileInfo(path).isSymLink())
+                continue;
             QFile file(path);
             if (!file.open(QIODevice::ReadOnly))
                 continue;
             QJsonParseError parseError;
             const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &parseError);
+            file.close();
             if (parseError.error != QJsonParseError::NoError || !document.isObject())
                 continue;
-
             const QJsonObject metadata = document.object();
             const QString id = metadata.value(QStringLiteral("launcherSession")).toString();
-            if (id.isEmpty() || !hasLauncherControlEndpoint(metadata))
+            if (id.isEmpty() || entry != id + QStringLiteral(".json")
+                    || !hasLauncherControlEndpoint(metadata) || seenSessionIds.contains(id))
                 continue;
-            if (seenSessionIds.contains(id))
-                continue;
-
-            QString statusError;
-            const QJsonObject statusResponse = sendLauncherControlRequest(
-                    metadata, qMin(timeoutMs, 1000), QStringLiteral("Session.status"), {},
-                    &statusError);
-            QJsonObject status;
-            if (statusError.isEmpty()) {
-                status = statusResponse.value(QStringLiteral("result")).toObject();
-                status.insert(QStringLiteral("controlReachable"), true);
-            } else {
-                status = {
-                    { QStringLiteral("controlReachable"), false },
-                    { QStringLiteral("controlError"), statusError },
-                    { QStringLiteral("sessionType"), metadata.value(QStringLiteral("sessionType")) },
-                    { QStringLiteral("launchCommand"), metadata.value(QStringLiteral("launchCommand")) },
-                    { QStringLiteral("reloadPreviewSupported"), metadata.value(QStringLiteral("reloadPreviewSupported")) },
-                };
-            }
             seenSessionIds.insert(id);
-            sessions.append({ id, metadata, status });
+            LauncherSession session = probeLauncherSession(metadata, timeoutMs);
+            if (!session.status.value(QStringLiteral("controlReachable")).toBool()
+                    && !verifiedStaleLauncherReason(metadata).isEmpty()) {
+                const QJsonObject cleanup = cleanupStaleLauncher(metadata, registryDirs);
+                if (cleanup.value(QStringLiteral("complete")).toBool()) {
+                    discovery.staleRemovals.append(cleanup);
+                    continue;
+                }
+                discovery.cleanupFailures.append(cleanup);
+                session.status.insert(QStringLiteral("cleanupError"), cleanup);
+            }
+            discovery.sessions.append(session);
         }
     }
-    return sessions;
+    return discovery;
 }
 
 QJsonArray launcherSessionSummaries(const QList<LauncherSession> &sessions)
 {
     QJsonArray summaries;
     for (const LauncherSession &session : sessions) {
-        summaries.append(QJsonObject{
+        QJsonObject summary{
             { QStringLiteral("launcherSession"), session.id },
             { QStringLiteral("controlReachable"), session.status.value(QStringLiteral("controlReachable")).toBool(true) },
             { QStringLiteral("controlError"), session.status.value(QStringLiteral("controlError")) },
+            { QStringLiteral("cleanupError"), session.status.value(QStringLiteral("cleanupError")) },
             { QStringLiteral("controlEndpoint"), launcherControlEndpointSummary(session) },
             { QStringLiteral("sessionType"), session.status.value(QStringLiteral("sessionType")) },
             { QStringLiteral("launchCommand"), session.status.value(QStringLiteral("launchCommand")) },
             { QStringLiteral("reloadPreviewSupported"), session.status.value(QStringLiteral("reloadPreviewSupported")) },
             { QStringLiteral("previewRoot"), session.status.value(QStringLiteral("previewRoot")) },
             { QStringLiteral("targetPid"), session.status.value(QStringLiteral("targetPid")) },
+            { QStringLiteral("sessionReady"), session.status.contains(QStringLiteral("sessionReady"))
+                    ? session.status.value(QStringLiteral("sessionReady"))
+                    : QJsonValue(QJsonValue::Null) },
+            { QStringLiteral("targetRunning"), session.status.contains(QStringLiteral("targetRunning"))
+                    ? session.status.value(QStringLiteral("targetRunning"))
+                    : QJsonValue(QJsonValue::Null) },
+            { QStringLiteral("launcherCwd"),
+              session.status.contains(QStringLiteral("launcherCwd"))
+                      ? session.status.value(QStringLiteral("launcherCwd"))
+                      : session.metadata.value(QStringLiteral("launcherCwd")) },
             { QStringLiteral("services"), session.status.value(QStringLiteral("services")) },
-        });
+        };
+        qmlagentInsertPidNamespace(summary,
+                                  session.metadata.value(QStringLiteral("pidNamespace")),
+                                  qmlagentClientPidNamespace());
+        summaries.append(summary);
     }
     return summaries;
 }
@@ -258,7 +304,7 @@ bool resolveLauncherSession(int timeoutMs, LauncherSession *selected, QString *e
     error->clear();
     QList<LauncherSession> matching;
     QList<LauncherSession> reachable;
-    for (const LauncherSession &session : discoverLauncherSessions(timeoutMs)) {
+    for (const LauncherSession &session : discoverLauncherSessions(timeoutMs).sessions) {
         if (!wantedSessionId.isEmpty() && !session.id.startsWith(wantedSessionId))
             continue;
         matching.append(session);

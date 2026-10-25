@@ -6,6 +6,7 @@
 #include "qmlagentmcpoutput.h"
 #include "qmlagentmcpprotocol.h"
 #include "qmlagentpaths.h"
+#include "qmlagentprocess.h"
 
 #include <private/qqmldebugclient_p.h>
 #include <private/qqmldebugconnection_p.h>
@@ -748,12 +749,15 @@ static int runCtlSubcommand(const QStringList &arguments)
     }
 
     if (command == QLatin1String("sessions")) {
-        const QList<LauncherSession> sessions = discoverLauncherSessions(timeoutMs);
+        const LauncherSessionDiscovery discovery = discoverLauncherSessions(timeoutMs);
         const QJsonArray recentExits = recentLauncherExitReports();
         printJsonObject({
             { QStringLiteral("ok"), true },
-            { QStringLiteral("sessionCount"), sessions.size() },
-            { QStringLiteral("sessions"), launcherSessionSummaries(sessions) },
+            { QStringLiteral("sessionCount"), discovery.sessions.size() },
+            { QStringLiteral("sessions"), launcherSessionSummaries(discovery.sessions) },
+            { QStringLiteral("staleRemoved"), discovery.staleRemovals.size() },
+            { QStringLiteral("staleRemovals"), discovery.staleRemovals },
+            { QStringLiteral("cleanupFailures"), discovery.cleanupFailures },
             { QStringLiteral("recentExitCount"), recentExits.size() },
             { QStringLiteral("recentExits"), recentExits },
         }, format);
@@ -2291,7 +2295,9 @@ private:
         if (!m_lastError.isEmpty())
             status.insert(QStringLiteral("lastError"), m_lastError);
         status.insert(QStringLiteral("agentToolGuide"), agentToolGuide());
-        const QList<LauncherSession> launcherSessions = discoverLauncherSessions(qMin(m_timeoutMs, 1000));
+        const LauncherSessionDiscovery discovery =
+                discoverLauncherSessions(qMin(m_timeoutMs, 1000));
+        const QList<LauncherSession> launcherSessions = discovery.sessions;
         const QJsonArray recentLauncherExits = recentLauncherExitReports();
         int reachableLauncherCount = 0;
         QJsonObject singleLauncher;
@@ -2312,6 +2318,15 @@ private:
                       : QStringLiteral("Start exactly one qmlagent-launcher session for automatic gateway routing.") },
             { QStringLiteral("session"), reachableLauncherCount == 1 ? QJsonValue(singleLauncher) : QJsonValue() },
         };
+        if (!discovery.staleRemovals.isEmpty()) {
+            launcherGateway.insert(QStringLiteral("staleRemoved"), discovery.staleRemovals.size());
+            launcherGateway.insert(QStringLiteral("staleRemovals"), discovery.staleRemovals);
+        }
+        if (!discovery.cleanupFailures.isEmpty())
+            launcherGateway.insert(QStringLiteral("cleanupFailures"), discovery.cleanupFailures);
+        qmlagentInsertPidNamespace(launcherGateway, reachableLauncherCount == 1
+                ? singleReachableLauncher.metadata.value(QStringLiteral("pidNamespace"))
+                : QJsonValue(QJsonValue::Null), qmlagentClientPidNamespace());
         QJsonObject launcherSessionInfo;
         // With several live sessions, list them all so an agent can pin one
         // (qmlagentctl --session <id>) without a separate discovery tool.
@@ -2340,9 +2355,15 @@ private:
             status.insert(QStringLiteral("recentLauncherExits"), recentLauncherExits);
         }
         if (!isTargetConnected()) {
-            status.insert(QStringLiteral("nextStep"), reachableLauncherCount == 1
-                    ? QStringLiteral("A single qmlagent-launcher gateway is available. Call target-backed request/response tools such as qmlagent_ui_query, qmlagent_ui_wait_for, qmlagent_input_click, qmlagent_input_long_press, qmlagent_input_drag, qmlagent_input_wheel, qmlagent_preview_reload, or workflow tools directly. Use qmlagent_connect_tcp/connect_local_socket only for manually launched targets or streamed subscriptions.")
-                    : notConnectedMessage());
+            if (reachableLauncherCount == 1) {
+                const bool targetRunning = singleLauncher
+                        .value(QStringLiteral("targetRunning")).toBool(false);
+                status.insert(QStringLiteral("nextStep"), targetRunning
+                        ? QStringLiteral("A single qmlagent-launcher gateway is available. Call target-backed request/response tools such as qmlagent_ui_query, qmlagent_ui_wait_for, qmlagent_input_click, qmlagent_input_long_press, qmlagent_input_drag, qmlagent_input_wheel, qmlagent_preview_reload, or workflow tools directly. Use qmlagent_connect_tcp/connect_local_socket only for manually launched targets or streamed subscriptions.")
+                        : QStringLiteral("The launcher gateway is reachable but targetRunning is false. Rebuild or relaunch the target session before sending request-backed tools."));
+            } else {
+                status.insert(QStringLiteral("nextStep"), notConnectedMessage());
+            }
         }
         status.insert(QStringLiteral("attachTools"), QJsonObject{
             { QStringLiteral("tools"), QJsonArray{
